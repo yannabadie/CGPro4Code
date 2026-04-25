@@ -2,9 +2,7 @@ import { chromium, type BrowserContext, type Page } from "playwright";
 import { existsSync } from "node:fs";
 import { ProfileLockedError } from "../errors.js";
 import { profileDir, ensureDirs } from "../store/paths.js";
-
-const CHATGPT_USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36";
+import { ensureInterceptorInstalled } from "../core/stream.js";
 
 export interface SessionOptions {
   headed?: boolean;
@@ -26,6 +24,8 @@ export interface Session {
  *   and clear any 2FA / Cloudflare challenges.
  * - Subsequent runs reuse the same profile directory; the cookie jar and
  *   IndexedDB stay warm so headless operation works without re-challenges.
+ * - The fetch interceptor for /backend-api/conversation is installed once
+ *   per context BEFORE any navigation, so it catches the very first request.
  */
 export async function openSession(opts: SessionOptions = {}): Promise<Session> {
   ensureDirs();
@@ -48,7 +48,9 @@ export async function openSession(opts: SessionOptions = {}): Promise<Session> {
       viewport: { width: 1280, height: 900 },
       locale: "en-US",
       timezoneId: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      userAgent: CHATGPT_USER_AGENT,
+      // Intentionally NOT setting userAgent: real Chrome already presents a
+      // valid, current UA. Forcing a pinned string causes Cloudflare to
+      // mismatch UA against client hints (sec-ch-ua) and fail the check.
       acceptDownloads: false,
       ignoreHTTPSErrors: false,
     });
@@ -72,6 +74,10 @@ export async function openSession(opts: SessionOptions = {}): Promise<Session> {
   await context.addInitScript(() => {
     Object.defineProperty(navigator, "webdriver", { get: () => undefined });
   });
+
+  // Install the SSE interceptor BEFORE any page navigation so the very
+  // first /backend-api/conversation hit is captured.
+  await ensureInterceptorInstalled(context);
 
   // Single tab per session.
   let page = context.pages()[0];

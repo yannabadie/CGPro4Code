@@ -1,4 +1,4 @@
-import type { Page } from "playwright";
+import type { BrowserContext, Page } from "playwright";
 
 export type StreamEvent =
   | { type: "started"; conversationId?: string; model?: string; web?: boolean }
@@ -51,6 +51,10 @@ export class StreamEmitter implements AsyncIterable<StreamEvent> {
     }
   }
 
+  isFinished(): boolean {
+    return this.finished;
+  }
+
   [Symbol.asyncIterator](): AsyncIterator<StreamEvent> {
     return {
       next: async (): Promise<IteratorResult<StreamEvent>> => {
@@ -75,32 +79,54 @@ export class StreamEmitter implements AsyncIterable<StreamEvent> {
 }
 
 /**
- * Installs a window.fetch wrapper inside the page that mirrors any
- * /backend-api/conversation SSE response into a Node-side binding.
- *
- * The page issues the real request (so it owns the proof tokens), and
- * we shadow-stream the response chunks.
+ * Per-context interceptor state. The binding is registered ONCE per
+ * BrowserContext (not per turn) — per-turn we swap which emitter+parser
+ * the binding routes to.
  */
-export async function installSseInterceptor(page: Page, emitter: StreamEmitter): Promise<void> {
-  // SSE chunk parser state
-  const parser = new SseParser();
+class InterceptorState {
+  parser: SseParser = new SseParser();
+  emitter: StreamEmitter | null = null;
+}
 
-  await page.exposeBinding("__cgproChunk", (_src, raw: string) => {
-    for (const event of parser.feed(raw)) {
-      emitter.push(event);
+const STATE = new WeakMap<BrowserContext, InterceptorState>();
+
+/**
+ * One-time setup: registers `__cgproChunk` / `__cgproDone` bindings on the
+ * context and adds the fetch-wrapping init script. Idempotent: subsequent
+ * calls are no-ops.
+ */
+export async function ensureInterceptorInstalled(context: BrowserContext): Promise<void> {
+  if (STATE.has(context)) return;
+  const state = new InterceptorState();
+  STATE.set(context, state);
+
+  await context.exposeBinding("__cgproChunk", (_src, raw: string) => {
+    const events = state.parser.feed(raw);
+    if (state.emitter) {
+      for (const ev of events) state.emitter.push(ev);
     }
   });
 
-  await page.exposeBinding("__cgproDone", (_src, payload?: { reason?: string }) => {
-    emitter.push({ type: "done", finalText: parser.cumulativeText() });
-    parser.reset();
-    if (payload?.reason === "error") {
-      // No-op: error already emitted by interceptor.
-    }
-  });
+  await context.exposeBinding(
+    "__cgproDone",
+    (_src, payload?: { reason?: string }) => {
+      if (state.emitter) {
+        if (payload?.reason === "error") {
+          state.emitter.push({
+            type: "error",
+            message: "fetch interceptor caught a stream error",
+          });
+        } else {
+          state.emitter.push({
+            type: "done",
+            finalText: state.parser.cumulativeText(),
+          });
+        }
+      }
+    },
+  );
 
-  await page.addInitScript(() => {
-    // Run inside every page (main + workers).
+  await context.addInitScript(() => {
     const w = window as unknown as Window & {
       __cgproInstalled?: boolean;
       __cgproChunk?: (raw: string) => void;
@@ -110,7 +136,8 @@ export async function installSseInterceptor(page: Page, emitter: StreamEmitter):
     w.__cgproInstalled = true;
 
     const isTargetUrl = (url: string): boolean =>
-      url.includes("/backend-api/conversation") || url.includes("/backend-api/f/conversation");
+      /\/backend-api\/(f\/)?conversation(\b|\/)/.test(url) ||
+      /\/backend-api\/conversations\/.+\/turns/.test(url);
 
     const originalFetch = w.fetch.bind(w);
     w.fetch = async (...args: Parameters<typeof fetch>): Promise<Response> => {
@@ -148,16 +175,50 @@ export async function installSseInterceptor(page: Page, emitter: StreamEmitter):
             const tail = decoder.decode();
             if (tail) w.__cgproChunk?.(tail);
             w.__cgproDone?.();
-          } catch (err) {
+          } catch {
             w.__cgproDone?.({ reason: "error" });
           }
         })();
       } catch {
-        // Ignore — interception failed, page works normally.
+        // Interception failed; the page still works normally.
       }
       return response;
     };
   });
+}
+
+/**
+ * Switches the active emitter for the given context's interceptor.
+ * Resets the SSE parser so the next turn starts from a clean slate.
+ *
+ * Returns the previous emitter (caller may want to flush or fail it).
+ */
+export function setActiveEmitter(
+  context: BrowserContext,
+  emitter: StreamEmitter | null,
+): StreamEmitter | null {
+  const state = STATE.get(context);
+  if (!state) return null;
+  const prev = state.emitter;
+  state.emitter = emitter;
+  state.parser.reset();
+  return prev;
+}
+
+/**
+ * Convenience: install (if needed) AND set this emitter as active.
+ *
+ * The page parameter exists for symmetry with old callers but the binding
+ * actually lives at the context level so it survives navigation and
+ * additional pages.
+ */
+export async function installSseInterceptor(
+  page: Page,
+  emitter: StreamEmitter,
+): Promise<void> {
+  const ctx = page.context();
+  await ensureInterceptorInstalled(ctx);
+  setActiveEmitter(ctx, emitter);
 }
 
 /**
@@ -207,7 +268,6 @@ export class SseParser {
     if (!payload || typeof payload !== "object") return out;
     const p = payload as Record<string, unknown>;
 
-    // Capture conversation id if present.
     if (typeof p["conversation_id"] === "string" && !this.capturedConvId) {
       this.capturedConvId = p["conversation_id"] as string;
     }
@@ -217,24 +277,8 @@ export class SseParser {
       out.push({ type: "started", conversationId: this.capturedConvId });
     }
 
-    // ChatGPT modern stream usually sends one of:
-    //   {v: "delta text"} for incremental deltas
-    //   {message: {content: {parts: [...]}}} for cumulative replacements
-    //   {p: "patch", o: "append/replace", v: "..."} for granular patches
-    //   {type: "delta", v: "..."} for newer schemas
-    //
-    // We try in order and concatenate all encountered text into latestText.
-
-    // Simple {v: "text"} delta with append
-    if (typeof p["v"] === "string" && p["o"] === undefined && p["p"] === undefined) {
-      const text = p["v"] as string;
-      if (text) {
-        this.latestText += text;
-        out.push({ type: "delta", text });
-      }
-    }
-
-    // {p: "/message/content/parts/0", o: "append", v: "..."}  — JSON patch
+    // {p, o, v} JSON-patch (specific paths) — checked first so it doesn't
+    // overlap with the simple {v, o} branch.
     if (
       typeof p["p"] === "string" &&
       typeof p["v"] === "string" &&
@@ -248,7 +292,7 @@ export class SseParser {
         out.push({ type: "delta", text });
       }
     } else if (typeof p["v"] === "string" && typeof p["o"] === "string") {
-      // Simple {v: "text", o: "append"} or {v: "text", o: "replace"} (no path)
+      // {v, o} append/replace (no path)
       const text = p["v"] as string;
       const op = p["o"] as string;
       if (op === "append") {
@@ -259,6 +303,13 @@ export class SseParser {
         const newDelta = text.startsWith(this.latestText) ? text.slice(oldLen) : text;
         this.latestText = text;
         if (newDelta) out.push({ type: "delta", text: newDelta });
+      }
+    } else if (typeof p["v"] === "string" && p["o"] === undefined && p["p"] === undefined) {
+      // {v: text} simple append
+      const text = p["v"] as string;
+      if (text) {
+        this.latestText += text;
+        out.push({ type: "delta", text });
       }
     }
 
@@ -286,9 +337,6 @@ export class SseParser {
         out.push({ type: "tool", name: (mm["recipient"] as string) ?? "tool", meta: mm });
       }
     }
-
-    // {type: "title_generation", title: "..."} → ignore for now
-    // {type: "message_completed"} → ignore
 
     return out;
   }

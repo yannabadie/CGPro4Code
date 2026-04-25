@@ -10,7 +10,7 @@ import {
   waitTurnComplete,
 } from "../browser/conversation.js";
 import {
-  installSseInterceptor,
+  setActiveEmitter,
   StreamEmitter,
   type StreamEvent,
 } from "./stream.js";
@@ -54,6 +54,7 @@ export function runAsk(opts: AskOptions): AskRunner {
 
   const result: Promise<AskResult> = (async () => {
     session = await openSession({ headed: !opts.headless, profilePath: opts.profile });
+    setActiveEmitter(session.context, emitter);
     try {
       const page = session.page;
       await goHome(page);
@@ -74,8 +75,6 @@ export function runAsk(opts: AskOptions): AskRunner {
         modelSlug = pro;
       }
 
-      await installSseInterceptor(page, emitter);
-
       await openConversation(page, {
         model: modelSlug,
         conversationId: opts.conversationId,
@@ -89,21 +88,29 @@ export function runAsk(opts: AskOptions): AskRunner {
 
       await sendPrompt(page, opts.prompt);
 
-      // Wait for the network stream OR the DOM stop button to settle.
+      // Wait for the turn to settle. The SSE interceptor will normally push
+      // a `done` event; if the network missed (cached response, schema we
+      // didn't recognize), we fall back to DOM detection.
       await waitTurnComplete(page, opts.timeoutSec * 1_000).catch(() => {
         if (!cancelled) throw new TurnTimeoutError(opts.timeoutSec);
       });
 
       const conversationId = currentConversationId(page);
-      // Prefer interceptor-captured text; fall back to DOM scrape.
-      let finalText = "";
-      // Drain any pending events to capture the latest finalText
-      // The done event already includes finalText from SseParser.cumulativeText.
-      const dom = await readLatestAssistantText(page);
-      finalText = dom || finalText;
 
-      // Push a definitive done with the DOM-confirmed text.
-      emitter.push({ type: "done", finalText });
+      // If the SSE interceptor didn't push `done` (or pushed an empty one),
+      // synthesize one from the DOM so the consumer's iterator finishes.
+      if (!emitter.isFinished()) {
+        const dom = await readLatestAssistantText(page);
+        emitter.push({ type: "done", finalText: dom });
+      }
+
+      // The collected list is appended to lazily by the tee'd iterator —
+      // by the time `result` resolves, the consumer has fully drained it.
+      const finalEvent = collected
+        .slice()
+        .reverse()
+        .find((e) => e.type === "done") as { finalText?: string } | undefined;
+      const finalText = finalEvent?.finalText ?? (await readLatestAssistantText(page));
 
       return { conversationId, finalText, events: collected };
     } catch (err) {
@@ -115,7 +122,6 @@ export function runAsk(opts: AskOptions): AskRunner {
     }
   })();
 
-  // Tee the iterator into both the consumer-facing emitter and the result.events array.
   const teed = teeEvents(emitter, collected);
 
   return {

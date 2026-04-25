@@ -12,7 +12,7 @@ import {
   waitTurnComplete,
 } from "../../browser/conversation.js";
 import { fetchModels, findProSlug } from "../../api/models.js";
-import { installSseInterceptor, StreamEmitter } from "../../core/stream.js";
+import { setActiveEmitter, StreamEmitter } from "../../core/stream.js";
 import { findThread, saveThread } from "../../store/threads.js";
 import { loadConfig } from "../../store/config.js";
 import { NotLoggedInError, TurnTimeoutError } from "../../errors.js";
@@ -64,15 +64,17 @@ export async function chatCommand(opts: ChatCliOptions): Promise<number> {
 
     const resumeId = opts.resume ? resolveConvId(opts.resume) : undefined;
 
-    let emitter = new StreamEmitter();
-    await installSseInterceptor(page, emitter);
     await openConversation(page, { model: modelSlug, conversationId: resumeId });
     await setWebSearch(page, webEnabled);
 
-    console.log(chalk.bold(`cgpro chat`) + chalk.dim(` — model: ${modelSlug}, web: ${webEnabled ? "on" : "off"}`));
+    console.log(
+      chalk.bold(`cgpro chat`) +
+        chalk.dim(` — model: ${modelSlug}, web: ${webEnabled ? "on" : "off"}`),
+    );
     console.log(
       chalk.dim(
-        "Commands: :web on/off, :model <slug>, :reset, :save <name>, :thread, :quit (Ctrl+D).",
+        "Slash: :web on/off, :model <slug>, :reset, :save <name>, :thread, :quit (Ctrl+C).\n" +
+          "Multi-line: end the line with a single backslash \\ to continue on the next line.",
       ),
     );
     console.log("");
@@ -80,28 +82,10 @@ export async function chatCommand(opts: ChatCliOptions): Promise<number> {
     let turnCount = 0;
 
     while (true) {
-      let userText: string;
-      try {
-        const response = await prompts(
-          {
-            type: "text",
-            name: "value",
-            message: chalk.cyan(`you ▸`),
-            validate: (v: string) => (v.trim().length > 0 ? true : "Empty prompt"),
-          },
-          {
-            onCancel: () => {
-              throw new Error("__cancelled__");
-            },
-          },
-        );
-        userText = (response.value ?? "").trim();
-      } catch (err) {
-        if ((err as Error).message === "__cancelled__") break;
-        throw err;
-      }
-
+      const userText = await readMultiLine();
+      if (userText === null) break;
       if (!userText) continue;
+
       if (userText.startsWith(":")) {
         const handled = await handleSlash(userText, {
           page,
@@ -111,15 +95,10 @@ export async function chatCommand(opts: ChatCliOptions): Promise<number> {
           },
           setModel: async (slug) => {
             modelSlug = slug;
-            // Re-open conversation to apply
-            emitter = new StreamEmitter();
-            await installSseInterceptor(page, emitter);
             await openConversation(page, { model: slug });
             await setWebSearch(page, webEnabled);
           },
           reset: async () => {
-            emitter = new StreamEmitter();
-            await installSseInterceptor(page, emitter);
             await openConversation(page, { model: modelSlug });
             await setWebSearch(page, webEnabled);
           },
@@ -132,13 +111,17 @@ export async function chatCommand(opts: ChatCliOptions): Promise<number> {
       }
 
       turnCount++;
+
+      // Fresh emitter for this turn — the binding routes its events here.
+      const emitter = new StreamEmitter();
+      setActiveEmitter(session.context, emitter);
+
       const spinner = ora({ text: "Thinking…", color: "cyan" }).start();
-      const localEmitter = emitter;
       let firstDelta = true;
       let buffer = "";
 
       const drainPromise = (async () => {
-        for await (const ev of localEmitter) {
+        for await (const ev of emitter) {
           if (ev.type === "delta") {
             if (firstDelta) {
               spinner.stop();
@@ -151,7 +134,7 @@ export async function chatCommand(opts: ChatCliOptions): Promise<number> {
             spinner.fail(ev.message);
             return;
           } else if (ev.type === "done") {
-            if (!firstDelta) process.stdout.write("\n");
+            if (!firstDelta && !opts.render) process.stdout.write("\n");
             if (opts.render) {
               const final = ev.finalText ?? buffer;
               spinner.stop();
@@ -165,16 +148,19 @@ export async function chatCommand(opts: ChatCliOptions): Promise<number> {
 
       await sendPrompt(page, userText);
       await waitTurnComplete(page, timeoutSec * 1_000).catch(() => {
-        throw new TurnTimeoutError(timeoutSec);
+        spinner.fail(`Turn timed out after ${timeoutSec}s.`);
+        emitter.push({
+          type: "error",
+          message: new TurnTimeoutError(timeoutSec).message,
+        });
       });
-      // After turn complete, ensure the emitter wraps up by pushing a synthetic done.
-      const dom = await readLatestAssistantText(page);
-      localEmitter.push({ type: "done", finalText: dom });
-      await drainPromise;
 
-      // Refresh emitter for next turn so events don't leak across turns.
-      emitter = new StreamEmitter();
-      await installSseInterceptor(page, emitter);
+      // Synthesize a `done` from the DOM if the SSE stream didn't end.
+      if (!emitter.isFinished()) {
+        const dom = await readLatestAssistantText(page);
+        emitter.push({ type: "done", finalText: dom });
+      }
+      await drainPromise;
 
       console.log("");
     }
@@ -183,6 +169,42 @@ export async function chatCommand(opts: ChatCliOptions): Promise<number> {
     return 0;
   } finally {
     await cleanup();
+  }
+}
+
+/**
+ * Reads a single user prompt. To enter multiple lines, end any line with a
+ * trailing backslash `\` — `prompts` is single-line so this is the smoothest
+ * cross-platform way without bringing in a full terminal line editor.
+ *
+ * Returns null on Ctrl+C / Ctrl+D.
+ */
+async function readMultiLine(): Promise<string | null> {
+  const lines: string[] = [];
+  while (true) {
+    let value: string | undefined;
+    let cancelled = false;
+    const response = await prompts(
+      {
+        type: "text",
+        name: "value",
+        message: chalk.cyan(lines.length === 0 ? "you ▸" : "    ▸"),
+      },
+      {
+        onCancel: () => {
+          cancelled = true;
+        },
+      },
+    );
+    if (cancelled) return null;
+    value = response.value as string | undefined;
+    if (value === undefined) return null;
+    if (value.endsWith("\\")) {
+      lines.push(value.slice(0, -1));
+      continue;
+    }
+    lines.push(value);
+    return lines.join("\n").trim();
   }
 }
 
@@ -250,7 +272,9 @@ async function handleSlash(line: string, ctx: SlashContext): Promise<"quit" | "o
       return "ok";
     }
     case "help":
-      console.log(chalk.dim("Commands: :web on/off, :model <slug>, :reset, :save <name>, :thread, :quit"));
+      console.log(
+        chalk.dim("Commands: :web on/off, :model <slug>, :reset, :save <name>, :thread, :quit"),
+      );
       return "ok";
     default:
       console.log(chalk.yellow(`unknown command: :${cmd}`));

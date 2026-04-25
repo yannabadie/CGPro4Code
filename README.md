@@ -40,7 +40,8 @@ npm run build
 npm link                           # installs the `cgpro` command globally
 ```
 
-(or run from the repo with `node dist/cli/index.js …`.)
+After `npm link`, the `cgpro` command is on your `PATH`. If you skip
+`npm link`, run it from the repo with `node dist/cli/index.js …` instead.
 
 ## First run
 
@@ -82,6 +83,15 @@ cgpro chat
 # you ▸ :web off
 # you ▸ :save db-migrations
 # you ▸ :quit
+```
+
+For multi-line prompts, end a line with a trailing backslash `\`. The next
+prompt will continue the same turn:
+
+```text
+you ▸ first line of context \
+    ▸ second line \
+    ▸ now actually ask the question
 ```
 
 Built-in slash commands:
@@ -153,11 +163,31 @@ for the full design doc and rationale.
 ## Stability
 
 - Selectors have ordered fallback chains in `selectors.ts`.
+- The fetch interceptor is registered **once per browser context**, before any
+  navigation, so it catches the very first `/backend-api/conversation` POST.
+  Per-turn we just swap which emitter the binding routes to (no double-register
+  bug across REPL turns).
 - `cgpro doctor` is the first thing to run when something breaks.
 - Unit tests (`npm test`) cover the SSE parser, the threads store, and selector
   shape integrity.
 - Live smoke (`CGPRO_LIVE=1 npm run test:live`) is opt-in and exercises a real
   account — keep this disabled in CI by default.
+
+### First-run smoke checklist
+
+After `cgpro login` succeeds, run these in order — each verifies a different
+layer:
+
+1. `cgpro status` — session JWT + plan + GPT-5.5 Pro detection.
+2. `cgpro doctor` — every selector resolves on the live DOM.
+3. `cgpro ask "ping in one word"` — composer typing + send + SSE stream + done.
+4. `cgpro ask --web "today's date in Lyon"` — web search toggle + sources.
+5. `cgpro chat` — open the REPL, send 3 turns, `:save smoke`, `:quit`. Re-open
+   with `cgpro chat --resume smoke` and confirm context is preserved.
+
+If step 3 hangs forever with no streaming, run `cgpro doctor` and look for
+the first `✖` — usually the composer or send-button selector drifted, and a
+one-line patch in `selectors.ts` fixes it.
 
 ## Compliance
 
