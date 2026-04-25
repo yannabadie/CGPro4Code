@@ -1,5 +1,4 @@
 {
-  "$schema": "https://json.schemastore.org/claude-code-plugin",
   "name": "cgpro",
   "version": "0.2.0",
   "description": "Talk to ChatGPT 5.5 Pro (extended reasoning + live web search) from Claude Code via the cgpro CLI.",
@@ -9,8 +8,5 @@
   },
   "homepage": "https://github.com/yannabadie/CGPro4Code",
   "category": "productivity",
-  "tags": ["chatgpt", "gpt-5.5", "second-opinion", "web-search", "reasoning"],
-  "commands": "./commands",
-  "agents": "./agents",
-  "skills": "./skills"
+  "keywords": ["chatgpt", "gpt-5.5", "second-opinion", "web-search", "reasoning"]
 }
