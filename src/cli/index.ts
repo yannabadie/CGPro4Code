@@ -8,6 +8,8 @@ import { statusCommand } from "./commands/status.js";
 import { modelsCommand } from "./commands/models.js";
 import { askCommand } from "./commands/ask.js";
 import { chatCommand } from "./commands/chat.js";
+import { doctorCommand } from "./commands/doctor.js";
+import { logoutCommand } from "./commands/logout.js";
 import {
   listThreadsCmd,
   removeThreadCmd,
@@ -74,6 +76,26 @@ program
   .action(async (promptParts: string[], opts) => {
     const promptArg = (promptParts ?? []).join(" ").trim();
     const code = await runOrExit(() => askCommand(promptArg, opts));
+    process.exit(code);
+  });
+
+program
+  .command("doctor")
+  .description("Audit selectors against the live chatgpt.com DOM.")
+  .option("--headed", "show the browser window")
+  .option("--profile <path>", "override the default profile directory")
+  .action(async (opts) => {
+    const code = await runOrExit(() => doctorCommand(opts));
+    process.exit(code);
+  });
+
+program
+  .command("logout")
+  .description("Remove the local browser profile (forces a re-login next run).")
+  .option("--profile <path>", "override the default profile directory")
+  .option("--yes", "skip confirmation")
+  .action(async (opts) => {
+    const code = await runOrExit(() => logoutCommand(opts));
     process.exit(code);
   });
 

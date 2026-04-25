@@ -234,21 +234,6 @@ export class SseParser {
       }
     }
 
-    // Simple {v: "text", o: "append"} or {v: "text", o: "replace"}
-    if (typeof p["v"] === "string" && typeof p["o"] === "string") {
-      const text = p["v"] as string;
-      const op = p["o"] as string;
-      if (op === "append") {
-        this.latestText += text;
-        out.push({ type: "delta", text });
-      } else if (op === "replace") {
-        const oldLen = this.latestText.length;
-        const newDelta = text.startsWith(this.latestText) ? text.slice(oldLen) : text;
-        this.latestText = text;
-        if (newDelta) out.push({ type: "delta", text: newDelta });
-      }
-    }
-
     // {p: "/message/content/parts/0", o: "append", v: "..."}  — JSON patch
     if (
       typeof p["p"] === "string" &&
@@ -261,6 +246,19 @@ export class SseParser {
       if (path.includes("/message/content/parts") && op === "append" && text) {
         this.latestText += text;
         out.push({ type: "delta", text });
+      }
+    } else if (typeof p["v"] === "string" && typeof p["o"] === "string") {
+      // Simple {v: "text", o: "append"} or {v: "text", o: "replace"} (no path)
+      const text = p["v"] as string;
+      const op = p["o"] as string;
+      if (op === "append") {
+        this.latestText += text;
+        out.push({ type: "delta", text });
+      } else if (op === "replace") {
+        const oldLen = this.latestText.length;
+        const newDelta = text.startsWith(this.latestText) ? text.slice(oldLen) : text;
+        this.latestText = text;
+        if (newDelta) out.push({ type: "delta", text: newDelta });
       }
     }
 
