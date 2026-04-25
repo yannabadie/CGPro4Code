@@ -7,6 +7,13 @@ import { loginCommand } from "./commands/login.js";
 import { statusCommand } from "./commands/status.js";
 import { modelsCommand } from "./commands/models.js";
 import { askCommand } from "./commands/ask.js";
+import {
+  listThreadsCmd,
+  removeThreadCmd,
+  renameThreadCmd,
+  saveThreadCmd,
+  showThreadCmd,
+} from "./commands/thread.js";
 
 const program = new Command();
 
@@ -66,6 +73,50 @@ program
   .action(async (promptParts: string[], opts) => {
     const promptArg = (promptParts ?? []).join(" ").trim();
     const code = await runOrExit(() => askCommand(promptArg, opts));
+    process.exit(code);
+  });
+
+const thread = program.command("thread").description("Manage saved conversations.");
+
+thread
+  .command("list")
+  .description("List saved threads.")
+  .option("--json", "emit JSON")
+  .action(async (opts) => {
+    const code = await runOrExit(async () => listThreadsCmd(opts));
+    process.exit(code);
+  });
+
+thread
+  .command("show <name>")
+  .description("Show details of a saved thread.")
+  .option("--json", "emit JSON")
+  .action(async (name: string, opts) => {
+    const code = await runOrExit(async () => showThreadCmd(name, opts));
+    process.exit(code);
+  });
+
+thread
+  .command("rm <name>")
+  .description("Remove a saved thread (the chatgpt.com conversation is not deleted).")
+  .action(async (name: string) => {
+    const code = await runOrExit(async () => removeThreadCmd(name));
+    process.exit(code);
+  });
+
+thread
+  .command("rename <old> <new>")
+  .description("Rename a saved thread.")
+  .action(async (oldName: string, newName: string) => {
+    const code = await runOrExit(async () => renameThreadCmd(oldName, newName));
+    process.exit(code);
+  });
+
+thread
+  .command("save <id> <name>")
+  .description("Save an existing chatgpt.com conversation UUID under a name.")
+  .action(async (id: string, name: string) => {
+    const code = await runOrExit(() => saveThreadCmd(id, name));
     process.exit(code);
   });
 

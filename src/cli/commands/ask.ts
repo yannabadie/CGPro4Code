@@ -2,7 +2,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { runAsk, type AskOptions } from "../../core/orchestrator.js";
 import { renderMarkdown } from "../../core/render/markdown.js";
-import { saveThread } from "../../store/threads.js";
+import { findThread, saveThread } from "../../store/threads.js";
 import { loadConfig } from "../../store/config.js";
 
 export interface AskCliOptions {
@@ -134,9 +134,8 @@ function readStdinIfPiped(): Promise<string> {
 }
 
 function resolveConvId(nameOrId: string): string {
-  // Threads helper resolves names → ids; if it's already a UUID, pass through.
   if (/^[0-9a-f-]{36}$/i.test(nameOrId)) return nameOrId;
-  // Lazy require to avoid circulars.
-  // The caller should pre-resolve via threads.find — kept simple for now.
+  const t = findThread(nameOrId);
+  if (t) return t.id;
   return nameOrId;
 }
