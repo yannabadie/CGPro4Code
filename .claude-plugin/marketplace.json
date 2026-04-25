@@ -9,10 +9,12 @@
   "plugins": [
     {
       "name": "cgpro",
-      "source": ".",
-      "version": "0.2.0",
       "description": "Talk to ChatGPT 5.5 Pro (extended reasoning + live web search) from Claude Code via the cgpro CLI.",
       "category": "productivity",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/yannabadie/CGPro4Code.git"
+      },
       "homepage": "https://github.com/yannabadie/CGPro4Code"
     }
   ]
