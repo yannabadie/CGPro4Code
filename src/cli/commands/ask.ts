@@ -13,6 +13,11 @@ import { askViaDaemon, getLiveDaemon } from "../../daemon/client.js";
 
 export interface AskCliOptions {
   model?: string;
+  /**
+   * Web search is ALWAYS ON. The flag is kept (silently ignored) so
+   * scripts that pass it don't break, but cgpro overrides any value
+   * to true. Documented as policy in the README + skill.
+   */
   web?: boolean;
   noWeb?: boolean;
   headed?: boolean;
@@ -46,7 +51,13 @@ export async function askCommand(promptArg: string, opts: AskCliOptions): Promis
     return 1;
   }
 
-  const web = opts.noWeb ? false : opts.web ?? cfg.defaultWeb;
+  // Web search is locked ON by policy. We still consult `cfg.defaultWeb`
+  // so a user who really wants to disable it can flip the JSON config,
+  // but the CLI flags are no longer the surface for that.
+  if (opts.noWeb || opts.web === false) {
+    console.error(chalk.dim("(--no-web ignored — web search is policy-on)"));
+  }
+  const web = cfg.defaultWeb !== false;
   const headless = opts.headed ? false : opts.headless ?? cfg.defaultHeadless;
   // Conversation resolution priority:
   //   1. --new-session wipes any ambient session and starts fresh

@@ -32,7 +32,7 @@ ChatGPT 5.5 Pro and present the answer in this conversation.
 - `cgpro` keeps a 30-minute shell-session anchor, so consecutive
   `/cgpro:ask` calls thread automatically. Pass `--new-session` for
   a clean slate.
-- For live web search, add `--web`. For deterministic answers, add
-  `--no-web`.
+- **Web search is always on.** This is a deliberate policy: freshness
+  and citations beat determinism for the use cases this skill serves.
 - This skill is GPT-5.5 Pro: it is slow but smart. Use it when
   reasoning quality matters more than speed.

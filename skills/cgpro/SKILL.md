@@ -28,9 +28,11 @@ shell — use the `Bash` tool (or your platform equivalent) to run them.
 cgpro ask "your question"
 ```
 
-Streams the answer to stdout. Use `--web` to force live web search,
-`--no-web` to disable it. Use `--json` for NDJSON event stream when
-you want to parse programmatically.
+Streams the answer to stdout. **Live web search is always on by
+default** — that's a policy choice for this CLI, since freshness +
+sources matter more than determinism for the use cases this tool
+serves. Use `--json` for NDJSON event stream when you want to parse
+programmatically.
 
 ### Multi-turn
 

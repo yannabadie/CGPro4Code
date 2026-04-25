@@ -38,7 +38,11 @@ export async function chatCommand(opts: ChatCliOptions): Promise<number> {
   await assertNoDaemon("chat");
   const cfg = loadConfig();
   const headless = opts.headed ? false : opts.headless ?? cfg.defaultHeadless;
-  let webEnabled = opts.noWeb ? false : opts.web ?? cfg.defaultWeb;
+  // Web search is locked ON for chat — same policy as `ask`.
+  if (opts.noWeb || opts.web === false) {
+    console.error(chalk.dim("(--no-web ignored — web search is policy-on)"));
+  }
+  let webEnabled = cfg.defaultWeb !== false;
   const timeoutSec = opts.timeout ?? cfg.timeoutSec;
 
   const session: Session = await openSession({ headed: !headless, profilePath: opts.profile });

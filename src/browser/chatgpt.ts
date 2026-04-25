@@ -18,35 +18,25 @@ export async function goHome(page: Page, opts: { model?: string } = {}): Promise
 }
 
 /**
- * Returns true if the current account is actually authenticated.
+ * Returns true ONLY if `/backend-api/me` returns a real user account.
  *
- * ChatGPT exposes an anonymous "Try ChatGPT" trial mode where the
- * composer is visible without a real login. The authoritative check is
- * GET /backend-api/me, but it must run from inside the page's JS
- * context — the React app injects an Authorization Bearer that
- * `page.context().request` does not have. We therefore use
- * `page.evaluate(fetch)`.
+ * `id: "user-XXX"` = authenticated.
+ * `id: "ua-XXX"`   = anonymous "Try ChatGPT" guest — explicitly NOT
+ *                    logged in for our purposes (Pro features hidden).
  *
- * `id: "user-XXX"` or non-empty email = authenticated.
- * `id: "ua-XXX"` with empty email = anonymous.
- *
- * As a fallback, presence of a known session cookie also flips us to true.
+ * Earlier versions used a cookie-fallback OR (`session-token` /
+ * `cf_clearance` present + any `me` response). That admitted anonymous
+ * guests as authenticated whenever a Cloudflare cookie was set, which
+ * is always — confirmed by the probe-projects script returning 401 on
+ * gizmos endpoints under what we thought was a valid session. The
+ * `me.id` discriminator is the only trustworthy signal.
  */
 export async function isLoggedIn(page: Page, timeoutMs = 10_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const me = await fetchMeInPage(page);
-    if (me && (me.id?.startsWith("user-") || (me.email ?? "").length > 0)) {
+    if (me && typeof me.id === "string" && me.id.startsWith("user-")) {
       return true;
-    }
-    const cookies = await page
-      .context()
-      .cookies(["https://chatgpt.com/", "https://auth.openai.com/"])
-      .catch(() => [] as Array<{ name: string; value: string }>);
-    if (cookies.some((c) => /session-token|^_account$|cf_clearance/.test(c.name) && c.value.length > 0)) {
-      // Cookie alone isn't proof of "user-…" auth, but combined with
-      // the page being navigable, it's a good positive signal.
-      if (me) return true;
     }
     await page.waitForTimeout(750);
   }
