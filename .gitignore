@@ -5,8 +5,10 @@ dist/
 # Dependencies
 node_modules/
 
-# Local state (NEVER commit)
+# Local state (NEVER commit) - profile contains auth cookies
 .cgpro/
+Usersyann.abadie*/
+**/AppData/Local/cgpro/
 .env
 .env.local
 
