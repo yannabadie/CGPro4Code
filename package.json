@@ -1,0 +1,64 @@
+{
+  "name": "cgpro",
+  "version": "0.1.0",
+  "description": "CLI for ChatGPT Pro: drives chatgpt.com with a real Chrome session to expose GPT-5.5 Pro (extended thinking + live web search) from your terminal",
+  "type": "module",
+  "bin": {
+    "cgpro": "./dist/cli/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli/index.ts",
+    "start": "node dist/cli/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:live": "CGPRO_LIVE=1 vitest run test/live",
+    "lint": "eslint src --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "audit:selectors": "tsx scripts/audit-selectors.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0",
+    "commander": "^12.1.0",
+    "chalk": "^5.3.0",
+    "ora": "^8.1.1",
+    "marked": "^14.1.3",
+    "marked-terminal": "^7.2.1",
+    "prompts": "^2.4.2",
+    "env-paths": "^3.0.0",
+    "mime": "^4.0.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.1",
+    "@types/marked-terminal": "^6.1.1",
+    "@types/prompts": "^2.4.9",
+    "typescript": "^5.6.3",
+    "tsx": "^4.19.2",
+    "vitest": "^2.1.5",
+    "eslint": "^9.15.0",
+    "@typescript-eslint/parser": "^8.15.0",
+    "@typescript-eslint/eslint-plugin": "^8.15.0",
+    "prettier": "^3.3.3"
+  },
+  "keywords": [
+    "chatgpt",
+    "cli",
+    "gpt-5.5",
+    "playwright",
+    "openai"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yannabadie/CGPro4Code.git"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
+}
