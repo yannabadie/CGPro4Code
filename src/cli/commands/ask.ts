@@ -10,6 +10,11 @@ import {
   saveActiveConversationId,
 } from "../../store/session.js";
 import { askViaDaemon, getLiveDaemon } from "../../daemon/client.js";
+import {
+  findMappingByKey,
+  readProjectMemory,
+  resolveLocalProject,
+} from "../../store/projects.js";
 
 export interface AskCliOptions {
   model?: string;
@@ -36,10 +41,15 @@ export interface AskCliOptions {
   background?: boolean;
   /**
    * Daemon routing. Commander populates this from `--no-daemon` to
-   * `false`; default (no flag) is `true`. Setting it to `false`
-   * forces a cold start even when a daemon is running.
+   * `false`; default (no flag) is `true`.
    */
   daemon?: boolean;
+  /**
+   * Project routing. Commander populates this from `--no-project` to
+   * `false`. When false, the conversation lands in Recents instead of
+   * the linked ChatGPT Project for this cwd.
+   */
+  project?: boolean;
 }
 
 export async function askCommand(promptArg: string, opts: AskCliOptions): Promise<number> {
@@ -74,12 +84,36 @@ export async function askCommand(promptArg: string, opts: AskCliOptions): Promis
     if (sess) conversationId = sess;
   }
 
+  // Auto-route into the ChatGPT Project linked to this cwd (unless
+  // we're resuming a specific conversation — those already belong to
+  // a project context).
+  let gizmoId: string | undefined;
+  let gizmoShortUrl: string | undefined;
+  let projectMemoryPreamble = "";
+  if (!conversationId && opts.project !== false) {
+    const here = resolveLocalProject();
+    const linked = findMappingByKey(here.key);
+    if (linked) {
+      gizmoId = linked.gizmoId;
+      gizmoShortUrl = linked.shortUrl;
+      const memory = readProjectMemory(linked.gizmoId).trim();
+      if (memory.length > 0) {
+        projectMemoryPreamble =
+          `<!-- cgpro project memory for "${linked.name}" — load-bearing context to remember -->\n` +
+          memory +
+          `\n<!-- end project memory -->\n\n`;
+      }
+    }
+  }
+
   const askOpts: AskOptions = {
-    prompt,
+    prompt: projectMemoryPreamble + prompt,
     model: opts.model ?? cfg.defaultModel,
     web,
     images: opts.image ?? [],
     conversationId,
+    gizmoId,
+    gizmoShortUrl,
     timeoutSec: opts.timeout ?? cfg.timeoutSec,
     headless,
     background: opts.background,

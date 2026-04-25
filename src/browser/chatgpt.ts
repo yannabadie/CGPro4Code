@@ -18,24 +18,25 @@ export async function goHome(page: Page, opts: { model?: string } = {}): Promise
 }
 
 /**
- * Returns true ONLY if `/backend-api/me` returns a real user account.
+ * Returns true ONLY if `/api/auth/session` returns a real user.
  *
- * `id: "user-XXX"` = authenticated.
- * `id: "ua-XXX"`   = anonymous "Try ChatGPT" guest — explicitly NOT
- *                    logged in for our purposes (Pro features hidden).
+ * Critical detail: `/backend-api/me` is NOT a reliable auth check —
+ * it returns the anonymous device id (`ua-XXX`) when called WITHOUT
+ * the `Authorization: Bearer <accessToken>` header, even for fully
+ * authenticated sessions. `/api/auth/session` uses the NextAuth
+ * session cookie directly and returns `{ user: { id: "user-XXX",
+ * email, name, ... }, accessToken, expires }`.
  *
- * Earlier versions used a cookie-fallback OR (`session-token` /
- * `cf_clearance` present + any `me` response). That admitted anonymous
- * guests as authenticated whenever a Cloudflare cookie was set, which
- * is always — confirmed by the probe-projects script returning 401 on
- * gizmos endpoints under what we thought was a valid session. The
- * `me.id` discriminator is the only trustworthy signal.
+ * Earlier versions of cgpro called `/backend-api/me` cookie-only and
+ * misinterpreted the resulting `ua-XXX` as "anonymous", silently
+ * rejecting valid sessions. Confirmed by check-cookies probe on
+ * 2026-04-25.
  */
 export async function isLoggedIn(page: Page, timeoutMs = 10_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const me = await fetchMeInPage(page);
-    if (me && typeof me.id === "string" && me.id.startsWith("user-")) {
+    const session = await fetchAuthSessionInPage(page);
+    if (session?.user?.id?.startsWith("user-")) {
       return true;
     }
     await page.waitForTimeout(750);
@@ -44,22 +45,34 @@ export async function isLoggedIn(page: Page, timeoutMs = 10_000): Promise<boolea
 }
 
 /**
- * Fetches /backend-api/me from inside the page's JavaScript context.
- * This way the React app's `Authorization: Bearer …` header is attached.
- * Returns null on any error.
+ * Calls `/api/auth/session` from inside the page context (cookies are
+ * sent by the browser; no Bearer needed for this endpoint).
+ * Returns the full session including the accessToken — caller can use
+ * the token to authorize subsequent `/backend-api/*` calls.
  */
-export async function fetchMeInPage(page: Page): Promise<{
-  id?: string;
-  email?: string;
-  name?: string;
-  plan?: string;
-  features?: string[];
-} | null> {
+export interface AuthSessionFull {
+  user?: {
+    id?: string;
+    name?: string;
+    email?: string;
+    image?: string;
+    picture?: string;
+    idp?: string;
+    mfa?: boolean;
+  };
+  accessToken?: string;
+  expires?: string;
+  account?: unknown;
+  authProvider?: string;
+  sessionToken?: string;
+}
+
+export async function fetchAuthSessionInPage(page: Page): Promise<AuthSessionFull | null> {
   try {
     const result = await page.evaluate(async () => {
       try {
-        const r = await fetch("/backend-api/me", {
-          headers: { Accept: "application/json", "OAI-Language": "en-US" },
+        const r = await fetch("/api/auth/session", {
+          headers: { Accept: "application/json" },
           credentials: "include",
         });
         if (!r.ok) return null;
@@ -68,10 +81,79 @@ export async function fetchMeInPage(page: Page): Promise<{
         return null;
       }
     });
-    return (result ?? null) as never;
+    return (result ?? null) as AuthSessionFull | null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Get a valid Bearer accessToken for /backend-api/* calls.
+ * Returns null if the user isn't authenticated.
+ */
+export async function getAccessToken(page: Page): Promise<string | null> {
+  const session = await fetchAuthSessionInPage(page);
+  return session?.accessToken ?? null;
+}
+
+/**
+ * Authenticated GET / POST / PATCH / etc. against /backend-api/*.
+ * Pulls the accessToken from /api/auth/session and adds the Bearer
+ * header automatically. Returns the parsed response body or throws.
+ */
+export async function backendApiFetch(
+  page: Page,
+  pathOrUrl: string,
+  init: { method?: string; body?: unknown; headers?: Record<string, string> } = {},
+): Promise<{ ok: boolean; status: number; body: unknown }> {
+  const token = await getAccessToken(page);
+  if (!token) return { ok: false, status: 401, body: null };
+  return await page.evaluate(
+    async ({ url, method, body, headers, accessToken }) => {
+      const r = await fetch(url, {
+        method,
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          "OAI-Language": "en-US",
+          Authorization: `Bearer ${accessToken}`,
+          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+          ...(headers ?? {}),
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
+      let parsed: unknown = null;
+      try {
+        parsed = await r.json();
+      } catch {
+        parsed = null;
+      }
+      return { ok: r.ok, status: r.status, body: parsed };
+    },
+    {
+      url: pathOrUrl,
+      method: init.method ?? "GET",
+      body: init.body,
+      headers: init.headers,
+      accessToken: token,
+    },
+  );
+}
+
+/**
+ * Fetches /backend-api/me with the Bearer JWT pulled from
+ * /api/auth/session. Returns null if not signed in.
+ */
+export async function fetchMeInPage(page: Page): Promise<{
+  id?: string;
+  email?: string;
+  name?: string;
+  plan?: string;
+  features?: string[];
+  orgs?: { data?: Array<{ id?: string; title?: string; settings?: Record<string, unknown> }> };
+} | null> {
+  const r = await backendApiFetch(page, "/backend-api/me");
+  return r.ok ? (r.body as never) : null;
 }
 
 /**
@@ -135,8 +217,11 @@ export async function detectBotChallenge(page: Page): Promise<boolean> {
 }
 
 /**
- * Reads /api/auth/session via the page's request context (cookies attached).
- * Returns null if the call fails or the user is not authenticated.
+ * Backwards-compat thin wrapper around `fetchAuthSessionInPage`. Old
+ * code paths used `page.context().request.get` which strips the
+ * NextAuth CSRF context and returns a banner-only payload — re-routed
+ * through page.evaluate(fetch) so the Bearer/cookies match what the
+ * React app sees.
  */
 export interface AuthSession {
   user?: { email?: string; name?: string; image?: string };
@@ -145,18 +230,13 @@ export interface AuthSession {
 }
 
 export async function fetchAuthSession(page: Page): Promise<AuthSession | null> {
-  try {
-    const resp = await page.context().request.get(`${CHATGPT_HOME}api/auth/session`, {
-      headers: { Accept: "application/json" },
-      timeout: 10_000,
-    });
-    if (!resp.ok()) return null;
-    const json = (await resp.json()) as AuthSession;
-    if (!json || Object.keys(json).length === 0) return null;
-    return json;
-  } catch {
-    return null;
-  }
+  const full = await fetchAuthSessionInPage(page);
+  if (!full || !full.user || !full.user.email) return null;
+  return {
+    user: { email: full.user.email, name: full.user.name, image: full.user.image },
+    expires: full.expires,
+    accessToken: full.accessToken,
+  };
 }
 
 const joinSelectorsLocal = joinSelectors;

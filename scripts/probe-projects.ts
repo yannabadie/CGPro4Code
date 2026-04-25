@@ -7,7 +7,7 @@
  */
 
 import { openSession } from "../src/browser/session.js";
-import { goHome, isLoggedIn } from "../src/browser/chatgpt.js";
+import { goHome, isLoggedIn, getAccessToken } from "../src/browser/chatgpt.js";
 
 interface ProbeResult {
   method: string;
@@ -37,18 +37,17 @@ const endpoints: { method: string; url: string; body?: unknown }[] = [
   { method: "GET", url: "/backend-api/gizmos/discovery" },
 
   // ---- CREATE project candidates (probe to find the right path) ----
-  // Empty body: the 422 should leak the expected schema in the error.
-  { method: "POST", url: "/backend-api/gizmos", body: { name: "cgpro-probe-DELETE-ME" } },
-  {
-    method: "POST",
-    url: "/backend-api/gizmos/snorlax",
-    body: { name: "cgpro-probe-DELETE-ME", display: { name: "cgpro-probe" } },
-  },
-  {
-    method: "POST",
-    url: "/backend-api/gizmos/g-p/create",
-    body: { name: "cgpro-probe-DELETE-ME" },
-  },
+  // POST /backend-api/gizmos creates a GPT not a Project — need a
+  // project-specific endpoint. Probe the obvious ones with empty body
+  // so the 422 schema-error reveals the expected fields.
+  { method: "GET", url: "/backend-api/gizmos/projects" },
+  { method: "PUT", url: "/backend-api/gizmos/projects", body: {} },
+  { method: "POST", url: "/backend-api/projects/create", body: {} },
+  { method: "POST", url: "/backend-api/gizmos/g-p-create", body: {} },
+  { method: "POST", url: "/backend-api/gizmos/snorlax/create", body: {} },
+  // Try GIZMO with "kind" hint variations
+  { method: "POST", url: "/backend-api/gizmos", body: { kind: "project", display: { name: "x" }, files: [], instructions: "" } },
+  { method: "POST", url: "/backend-api/gizmos", body: { type: "project", display: { name: "x" }, files: [], instructions: "" } },
 
   // ---- UPDATE / instructions (advisor's discriminating test) ----
   // 422 here = path exists; 404 = path doesn't.
@@ -65,11 +64,15 @@ const endpoints: { method: string; url: string; body?: unknown }[] = [
   },
 ];
 
-async function probe(page: import("patchright").Page, ep: { method: string; url: string; body?: unknown }): Promise<ProbeResult> {
+async function probe(
+  page: import("patchright").Page,
+  ep: { method: string; url: string; body?: unknown },
+  accessToken: string | null,
+): Promise<ProbeResult> {
   const fetched = await page
     .evaluate(
       async (
-        { method, url, body }: { method: string; url: string; body?: unknown },
+        { method, url, body, token }: { method: string; url: string; body?: unknown; token: string | null },
       ): Promise<FetchResult> => {
         try {
           const init: RequestInit = {
@@ -78,6 +81,7 @@ async function probe(page: import("patchright").Page, ep: { method: string; url:
             headers: {
               Accept: "application/json",
               "OAI-Language": "en-US",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
               ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
             },
             ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -101,7 +105,7 @@ async function probe(page: import("patchright").Page, ep: { method: string; url:
           };
         }
       },
-      { method: ep.method, url: ep.url, body: ep.body },
+      { method: ep.method, url: ep.url, body: ep.body, token: accessToken },
     )
     .catch((e: Error) => ({
       ok: false,
@@ -145,23 +149,18 @@ async function main(): Promise<void> {
       )
       .catch(() => console.error("(no composer/login selector — continuing)"));
 
-    // Poll /me up to 30s for a user-XXX id; the JWT injection can lag.
-    const deadline = Date.now() + 30_000;
-    let me = await probe(session.page, { method: "GET", url: "/backend-api/me" });
-    while (Date.now() < deadline) {
-      const idMatch = me.bodyPreview.match(/"id":"(ua-|user-)([^"]+)"/);
-      const kind = idMatch?.[1] ?? "?";
-      console.error(`me.id kind=${kind} preview=${me.bodyPreview.slice(0, 80)}`);
-      if (kind === "user-") break;
-      await session.page.waitForTimeout(1_500);
-      me = await probe(session.page, { method: "GET", url: "/backend-api/me" });
+    // Pull the Bearer once; reuse for every backend-api call.
+    const accessToken = await getAccessToken(session.page);
+    if (!accessToken) {
+      console.error("NO ACCESS TOKEN from /api/auth/session — run `cgpro login` first.");
+      process.exit(2);
     }
-    if (!(await isLoggedIn(session.page, 5_000))) {
-      console.error("NOT LOGGED IN (per strict isLoggedIn) — continuing anyway to dump probe results.");
-    }
+    console.error(`accessToken first20=${accessToken.slice(0, 20)}…`);
+    void isLoggedIn;
+
     const results: ProbeResult[] = [];
     for (const ep of endpoints) {
-      const r = await probe(session.page, ep);
+      const r = await probe(session.page, ep, accessToken);
       results.push(r);
       // Compact one-liner to stderr so we can watch progress
       console.error(`${r.status.toString().padStart(3, " ")} ${ep.method.padEnd(4)} ${ep.url}`);

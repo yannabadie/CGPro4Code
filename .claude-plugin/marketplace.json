@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "cgpro",
-      "description": "Talk to ChatGPT 5.5 Pro (extended reasoning + live web search) from Claude Code via the cgpro CLI.",
+      "description": "ChatGPT 5.5 Pro from your terminal — auto-routes conversations into matching ChatGPT Projects and keeps a per-project memory.md.",
       "category": "productivity",
       "source": {
         "source": "url",

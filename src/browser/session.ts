@@ -57,7 +57,11 @@ export async function openSession(opts: SessionOptions = {}): Promise<Session> {
   // Background mode: keep the headed Chromium fingerprint (Cloudflare
   // challenges headless), but park the window off-screen + minimised
   // so it never pops up in front of the user.
-  const background = opts.background ?? process.env.CGPRO_BACKGROUND === "1";
+  // DEFAULT IS ON — the user wants cgpro to be transparent. Pass
+  // `background: false` (or set CGPRO_NO_BACKGROUND=1) to actually see
+  // the browser (used by `cgpro login` because the user must interact).
+  const envForceShow = process.env.CGPRO_NO_BACKGROUND === "1";
+  const background = (opts.background ?? !envForceShow) && !envForceShow;
   if (background && !headless) {
     launchArgs.push("--window-position=-32000,-32000", "--start-minimized");
   }

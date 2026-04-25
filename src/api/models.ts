@@ -1,4 +1,5 @@
 import type { Page } from "patchright";
+import { backendApiFetch } from "../browser/chatgpt.js";
 
 export interface ChatgptModel {
   slug: string;
@@ -14,28 +15,14 @@ export interface ModelsResponse {
   categories?: unknown[];
 }
 
-/**
- * Fetches the model catalogue available to the current account.
- * GET /backend-api/models?history_and_training_disabled=false
- *
- * Runs inside the page so the React app's Bearer token is attached.
- */
 export async function fetchModels(page: Page, _accessToken?: string): Promise<ChatgptModel[]> {
-  try {
-    const result = await page.evaluate(async () => {
-      const r = await fetch("/backend-api/models?history_and_training_disabled=false", {
-        headers: { Accept: "application/json", "OAI-Language": "en-US" },
-        credentials: "include",
-      });
-      if (!r.ok) return null;
-      return await r.json();
-    });
-    if (!result) return [];
-    const json = result as ModelsResponse;
-    return json.models ?? [];
-  } catch {
-    return [];
-  }
+  const r = await backendApiFetch(
+    page,
+    "/backend-api/models?history_and_training_disabled=false",
+  );
+  if (!r.ok) return [];
+  const json = r.body as ModelsResponse | null;
+  return json?.models ?? [];
 }
 
 /**

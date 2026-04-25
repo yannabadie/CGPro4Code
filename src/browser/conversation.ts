@@ -6,22 +6,32 @@ import { firstResolved, requireSelector } from "./chatgpt.js";
  * Open a chatgpt.com conversation.
  *
  *   - `conversationId` set → resume that exact thread (`/c/<uuid>`).
- *   - else → start a brand-new (persistent) chat.
+ *   - else if `gizmoId` set → start a new chat *inside* that project,
+ *     so the resulting conversation lands in the project sidebar
+ *     instead of the global Recents.
+ *   - else → start a brand-new conversation in Recents.
  *
  * Ephemeral / Temporary Chat is intentionally NOT exposed: the
  * resulting conversation is not addressable by URL, which makes
- * multi-turn auto-resume impossible — we use plain persistent chats
- * and rely on the local index to keep them organised.
+ * multi-turn auto-resume impossible.
  */
 export async function openConversation(
   page: Page,
-  opts: { model?: string; conversationId?: string } = {},
+  opts: { model?: string; conversationId?: string; gizmoId?: string; gizmoShortUrl?: string } = {},
 ): Promise<void> {
   if (opts.conversationId) {
     await page.goto(`https://chatgpt.com/c/${opts.conversationId}`, {
       waitUntil: "domcontentloaded",
       timeout: 60_000,
     });
+  } else if (opts.gizmoId) {
+    // Land on the project page; the next sendPrompt creates a conv
+    // inside it (the React app reads the gizmo from the URL and
+    // includes the right conversation_mode in the POST body).
+    const slug = opts.gizmoShortUrl ?? opts.gizmoId;
+    const url = new URL(`https://chatgpt.com/g/${encodeURIComponent(slug)}/project`);
+    if (opts.model) url.searchParams.set("model", opts.model);
+    await page.goto(url.toString(), { waitUntil: "domcontentloaded", timeout: 60_000 });
   } else {
     const url = new URL("https://chatgpt.com/");
     if (opts.model) url.searchParams.set("model", opts.model);
@@ -68,18 +78,65 @@ async function tryEnsureModel(page: Page, slug: string): Promise<void> {
 }
 
 /**
- * Toggle the composer's web-search button until aria-pressed matches `on`.
- * No-op if the toggle isn't present (some accounts/locales hide it).
+ * Enable / disable composer web search. The toggle moved into a
+ * "+ Tools" popover on recent chatgpt.com builds, so we look for it
+ * inline first, then fall back to opening the tools menu.
+ *
+ * Returns the resolved state. Throws when `on=true` is requested but
+ * we can't make it stick — cgpro policy is web-on, the caller should
+ * surface the failure (not silently degrade).
  */
-export async function setWebSearch(page: Page, on: boolean): Promise<void> {
-  const toggle = await firstResolved(page, SELECTORS.webSearchToggle);
-  if (!toggle) return;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const pressed = (await toggle.getAttribute("aria-pressed")) === "true";
-    if (pressed === on) return;
-    await toggle.click({ timeout: 5_000 }).catch(() => {});
-    await page.waitForTimeout(250);
+export async function setWebSearch(page: Page, on: boolean): Promise<boolean> {
+  // Pass 1: inline toggle (older / desktop layout)
+  let toggle = await firstResolved(page, SELECTORS.webSearchToggle);
+  if (!toggle) {
+    // Pass 2: open the "+ tools" popover and look inside
+    const plus = await firstResolved(page, [
+      'button[data-testid="composer-plus-btn"]',
+      'button[aria-label*="Add" i][aria-haspopup]',
+      'button[aria-label*="More" i][aria-haspopup]',
+      'button[aria-label*="Outils" i]',
+      'button[aria-label*="Tools" i]',
+    ]);
+    if (plus) {
+      await plus.click({ timeout: 3_000 }).catch(() => {});
+      await page.waitForTimeout(300);
+      toggle = await firstResolved(page, [
+        '[role="menuitem"]:has-text("web")',
+        '[role="menuitem"]:has-text("Web")',
+        '[role="menuitemcheckbox"]:has-text("Web")',
+        '[role="menuitemcheckbox"]:has-text("web")',
+        ...SELECTORS.webSearchToggle,
+      ]);
+    }
   }
+  if (!toggle) {
+    if (on) {
+      console.error(
+        "[cgpro:web] WARNING: web search toggle not found on this page; cgpro policy is web-on but we couldn't enable it. The model may answer without live web access.",
+      );
+    }
+    return false;
+  }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const pressed =
+      (await toggle.getAttribute("aria-pressed").catch(() => null)) === "true" ||
+      (await toggle.getAttribute("aria-checked").catch(() => null)) === "true";
+    if (pressed === on) {
+      // Close the popover if we opened it.
+      await page.keyboard.press("Escape").catch(() => {});
+      return on;
+    }
+    await toggle.click({ timeout: 5_000 }).catch(() => {});
+    await page.waitForTimeout(300);
+  }
+  await page.keyboard.press("Escape").catch(() => {});
+  if (on) {
+    console.error(
+      "[cgpro:web] WARNING: clicked the web-search toggle but aria-pressed/aria-checked never reflected `on`. Continuing — but verify the result.",
+    );
+  }
+  return false;
 }
 
 /**

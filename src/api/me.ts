@@ -1,4 +1,5 @@
 import type { Page } from "patchright";
+import { backendApiFetch } from "../browser/chatgpt.js";
 
 export interface MeResponse {
   id?: string;
@@ -11,34 +12,27 @@ export interface MeResponse {
   plan?: string;
   intercom_hash?: string;
   has_payment_method?: boolean;
+  orgs?: {
+    data?: Array<{
+      id?: string;
+      title?: string;
+      name?: string;
+      settings?: Record<string, unknown>;
+      role?: string;
+      personal?: boolean;
+    }>;
+  };
 }
 
-/**
- * Fetches /backend-api/me from inside the page's JS context so the
- * React app's `Authorization: Bearer …` JWT is auto-attached.
- * `accessToken` is accepted for API parity but ignored — the page-side
- * fetch already has the right credentials.
- */
 export async function fetchMe(page: Page, _accessToken?: string): Promise<MeResponse | null> {
-  try {
-    const result = await page.evaluate(async () => {
-      const r = await fetch("/backend-api/me", {
-        headers: { Accept: "application/json", "OAI-Language": "en-US" },
-        credentials: "include",
-      });
-      if (!r.ok) return null;
-      return await r.json();
-    });
-    return (result ?? null) as MeResponse | null;
-  } catch {
-    return null;
-  }
+  const r = await backendApiFetch(page, "/backend-api/me");
+  return r.ok ? (r.body as MeResponse) : null;
 }
 
 export function detectPlan(me: MeResponse | null): string {
   if (!me) return "unknown";
   if (me.plan) return me.plan;
-  // Fallback: feature/group sniffing
+  // Most accounts surface plan via the org settings or features array.
   const f = (me.features ?? []).concat(me.groups ?? []).join(",").toLowerCase();
   if (f.includes("pro")) return "pro";
   if (f.includes("business")) return "business";

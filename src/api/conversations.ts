@@ -15,6 +15,7 @@
 
 import type { Page } from "patchright";
 import { SELECTORS } from "../browser/selectors.js";
+import { backendApiFetch } from "../browser/chatgpt.js";
 
 export interface RemoteConversation {
   id: string;
@@ -62,24 +63,7 @@ async function fetchViaApi(
   ];
 
   for (const url of urls) {
-    const result = await page
-      .evaluate(async (u) => {
-        try {
-          const r = await fetch(u, {
-            headers: { Accept: "application/json", "OAI-Language": "en-US" },
-            credentials: "include",
-          });
-          return {
-            ok: r.ok,
-            status: r.status,
-            body: r.ok ? await r.json() : null,
-          };
-        } catch (e) {
-          return { ok: false, status: 0, body: null, error: (e as Error).message };
-        }
-      }, url)
-      .catch((e) => ({ ok: false as const, status: 0, body: null, error: (e as Error).message }));
-
+    const result = await backendApiFetch(page, url);
     log(
       `${url} → ok=${result.ok} status=${result.status} bodyKeys=${
         result.body && typeof result.body === "object"
@@ -87,7 +71,6 @@ async function fetchViaApi(
           : "(none)"
       }`,
     );
-
     if (!result.ok) continue;
     const rows = extractItems(result.body);
     if (rows.length > 0) {

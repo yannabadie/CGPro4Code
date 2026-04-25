@@ -1,6 +1,6 @@
 ---
 name: cgpro
-description: Use the local cgpro CLI to consult ChatGPT 5.5 Pro (extended thinking + live web search). Reach for this skill when the user wants a second opinion on a hard problem, deep reasoning on a tricky design, fresh information from the web, or to drive a multi-turn ChatGPT conversation from the shell. Works identically in Claude Code and OpenAI Codex.
+description: Use the local cgpro CLI to consult ChatGPT 5.5 Pro (extended thinking + live web search) AND to mirror the current Claude Code project into a ChatGPT Project so conversations land in the right folder with persistent project memory. Reach for this skill when the user wants a second opinion, deep reasoning, fresh web info, multi-turn chats, or wants to make a directory's GPT-5.5 conversations stay organised inside a named ChatGPT Project (auto-routed, with a memory.md that's prepended to every new chat).
 ---
 
 # cgpro: ChatGPT 5.5 Pro from the terminal
@@ -55,6 +55,25 @@ cgpro thread list --remote --refresh   # the chatgpt.com sidebar
 cgpro ask --resume <name|uuid> "follow-up"
 cgpro ask --save <name> "..."     # save the resulting thread under a name
 ```
+
+### Project routing (keep your Recents clean)
+
+`cgpro` mirrors the current cwd into a ChatGPT Project so conversations
+land there and out of the global Recents list. Identity is the git
+remote (when present) or the cwd path.
+
+```bash
+cgpro project list              # remote projects + which one is linked here
+cgpro project link "MyProj"     # link this cwd to an existing project
+cgpro project show              # see linked project + recent convs + memory size
+cgpro project digest            # ask GPT-5.5 to summarise recent convs into memory.md
+cgpro ask "anything"            # auto-routes into the linked project,
+                                # injects memory.md as preamble for new convs
+cgpro ask --no-project "..."    # opt out of routing for one call
+```
+
+Project memory lives at `~/.cgpro/projects/<gizmoId>/memory.md` and is
+appended (not overwritten) by `digest`.
 
 ### Speed: daemon mode
 

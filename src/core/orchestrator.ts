@@ -25,6 +25,14 @@ export interface AskOptions {
   images?: string[];
   /** Resume a previous conversation by its chatgpt.com UUID. */
   conversationId?: string;
+  /**
+   * Pin the new conversation to a ChatGPT Project (gizmo). Ignored
+   * when `conversationId` is set — resumed convs already belong to
+   * a project (or none).
+   */
+  gizmoId?: string;
+  /** Optional shortUrl for the gizmo so the URL is human-readable. */
+  gizmoShortUrl?: string;
   timeoutSec: number;
   headless: boolean;
   /** Hide the browser window off-screen for unobtrusive runs. */
@@ -107,11 +115,13 @@ function runAskInner(
       const modelSlug = opts.model;
 
       log(
-        `openConversation model=${modelSlug ?? "(account default)"} resume=${opts.conversationId ?? "no"}…`,
+        `openConversation model=${modelSlug ?? "(account default)"} resume=${opts.conversationId ?? "no"} gizmo=${opts.gizmoId ?? "none"}…`,
       );
       await openConversation(page, {
         model: modelSlug,
         conversationId: opts.conversationId,
+        gizmoId: opts.gizmoId,
+        gizmoShortUrl: opts.gizmoShortUrl,
       });
       log(`openConversation done, url=${page.url()}`);
 

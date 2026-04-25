@@ -18,6 +18,14 @@ import {
   daemonStopCmd,
 } from "./commands/daemon.js";
 import {
+  projectCreateCmd,
+  projectDigestCmd,
+  projectLinkCmd,
+  projectListCmd,
+  projectShowCmd,
+  projectUnlinkCmd,
+} from "./commands/project.js";
+import {
   listThreadsCmd,
   removeThreadCmd,
   renameThreadCmd,
@@ -98,6 +106,7 @@ program
   .option("--background", "open the browser off-screen so it never pops up in front")
   .option("--new-session", "start a fresh conversation (do not auto-resume the recent shell session)")
   .option("--no-daemon", "force a cold-start browser even if a daemon is running")
+  .option("--no-project", "skip auto-routing into the ChatGPT Project linked to this cwd")
   .action(async (promptParts: string[], opts) => {
     const promptArg = (promptParts ?? []).join(" ").trim();
     const code = await runOrExit(() => askCommand(promptArg, opts));
@@ -230,6 +239,74 @@ daemon
   .option("--json", "emit JSON")
   .action(async (opts) => {
     const code = await runOrExit(() => daemonStatusCmd(opts));
+    process.exit(code);
+  });
+
+const project = program
+  .command("project")
+  .description("Mirror the local project into a ChatGPT Project so conversations land there.");
+
+project
+  .command("list")
+  .description("List ChatGPT projects + which one is linked to this cwd.")
+  .option("--profile <path>", "override the default profile directory")
+  .option("--headless", "force headless mode")
+  .option("--json", "emit JSON")
+  .action(async (opts) => {
+    const code = await runOrExit(() => projectListCmd(opts));
+    process.exit(code);
+  });
+
+project
+  .command("show [nameOrId]")
+  .description("Show a project's metadata, recent conversations, and local memory size.")
+  .option("--profile <path>")
+  .option("--headless")
+  .option("--json")
+  .action(async (nameOrId: string | undefined, opts) => {
+    const code = await runOrExit(() => projectShowCmd(nameOrId, opts));
+    process.exit(code);
+  });
+
+project
+  .command("link <nameOrId>")
+  .description("Link the current cwd to an existing ChatGPT Project (by name or g-p- id).")
+  .option("--profile <path>")
+  .option("--headless")
+  .action(async (nameOrId: string, opts) => {
+    const code = await runOrExit(() => projectLinkCmd(nameOrId, opts));
+    process.exit(code);
+  });
+
+project
+  .command("unlink")
+  .description("Remove the cwd → ChatGPT-Project link (does not delete the remote project).")
+  .action(async () => {
+    const code = await runOrExit(async () => projectUnlinkCmd());
+    process.exit(code);
+  });
+
+project
+  .command("create [name]")
+  .description("Create a new ChatGPT Project + auto-link the current cwd.")
+  .option("--description <text>", "project description")
+  .option("--instructions <text>", "initial custom instructions")
+  .option("--profile <path>")
+  .option("--headless")
+  .action(async (name: string | undefined, opts) => {
+    const code = await runOrExit(() => projectCreateCmd(name, opts));
+    process.exit(code);
+  });
+
+project
+  .command("digest")
+  .description("Summarise this project's recent conversations into local memory.md.")
+  .option("--limit <n>", "how many recent conversations to digest", (v) => parseInt(v, 10))
+  .option("--dry-run", "print the digest instead of writing it")
+  .option("--profile <path>")
+  .option("--headless")
+  .action(async (opts) => {
+    const code = await runOrExit(() => projectDigestCmd(opts));
     process.exit(code);
   });
 
