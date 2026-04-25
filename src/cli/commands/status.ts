@@ -5,6 +5,7 @@ import { fetchAuthSession, goHome, isLoggedIn } from "../../browser/chatgpt.js";
 import { detectPlan, fetchMe } from "../../api/me.js";
 import { fetchModels, findProSlug } from "../../api/models.js";
 import { NotLoggedInError } from "../../errors.js";
+import { assertNoDaemon } from "../../daemon/client.js";
 
 export interface StatusOptions {
   profile?: string;
@@ -12,6 +13,7 @@ export interface StatusOptions {
 }
 
 export async function statusCommand(opts: StatusOptions): Promise<number> {
+  await assertNoDaemon("status");
   // Default to headed — chatgpt.com challenges headless Chromium even
   // with a warmed-up profile. Pass --headless to override.
   const session = await openSession({

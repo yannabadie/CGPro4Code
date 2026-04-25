@@ -2,6 +2,7 @@ import chalk from "chalk";
 import ora from "ora";
 import { openSession } from "../../browser/session.js";
 import { goHome } from "../../browser/chatgpt.js";
+import { assertNoDaemon } from "../../daemon/client.js";
 
 export interface LoginOptions {
   profile?: string;
@@ -25,6 +26,7 @@ interface MeProbe {
  *      see "user-XXX", so the user has all the time they need.
  */
 export async function loginCommand(opts: LoginOptions): Promise<number> {
+  await assertNoDaemon("login");
   const timeoutSec = opts.timeout ?? 300;
   const startedAt = Date.now();
 

@@ -6,6 +6,7 @@
  */
 
 import { request } from "node:http";
+import { CgproError } from "../errors.js";
 import { StreamEmitter, type StreamEvent } from "../core/stream.js";
 import {
   pidIsAlive,
@@ -16,6 +17,24 @@ import {
   type StatusResponse,
 } from "./protocol.js";
 import type { AskOptions, AskResult, AskRunner } from "../core/orchestrator.js";
+
+/**
+ * Throw a clear error if the daemon owns the cgpro profile. Cold-start
+ * commands (`status`, `models`, `doctor`, `adopt`, `login`, `logout`,
+ * `chat`, `thread sync`) all `launchPersistentContext` against the same
+ * profile dir as the daemon — Chromium's process-singleton lock makes
+ * those mutually exclusive. Surface that to the user instead of letting
+ * them see `ProfileLockedError`.
+ */
+export async function assertNoDaemon(commandName: string): Promise<void> {
+  const live = await getLiveDaemon();
+  if (!live) return;
+  throw new CgproError(
+    `\`cgpro ${commandName}\` cannot run while the daemon owns the profile.`,
+    8,
+    "Stop the daemon first: `cgpro daemon stop`",
+  );
+}
 
 /**
  * Returns the daemon connection if a live daemon is running on this

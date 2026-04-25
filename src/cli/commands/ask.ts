@@ -29,8 +29,12 @@ export interface AskCliOptions {
   newSession?: boolean;
   /** Hide the browser window off-screen. */
   background?: boolean;
-  /** Force a cold start even if a daemon is running. */
-  noDaemon?: boolean;
+  /**
+   * Daemon routing. Commander populates this from `--no-daemon` to
+   * `false`; default (no flag) is `true`. Setting it to `false`
+   * forces a cold start even when a daemon is running.
+   */
+  daemon?: boolean;
 }
 
 export async function askCommand(promptArg: string, opts: AskCliOptions): Promise<number> {
@@ -79,7 +83,11 @@ export async function askCommand(promptArg: string, opts: AskCliOptions): Promis
 }
 
 async function buildRunner(askOpts: AskOptions, opts: AskCliOptions): Promise<AskRunner> {
-  if (!opts.noDaemon) {
+  // Commander turns `--no-daemon` into `opts.daemon === false`; the
+  // implicit default is `true`. We explicitly check `!== false` so a
+  // missing field (e.g. programmatic callers) still goes through the
+  // daemon when one exists.
+  if (opts.daemon !== false) {
     const daemon = await getLiveDaemon();
     if (daemon) return askViaDaemon(daemon, askOpts);
   }

@@ -10,6 +10,7 @@ import {
 import { ensureDirs, profileDir } from "../../store/paths.js";
 import { openSession } from "../../browser/session.js";
 import { goHome, isLoggedIn, fetchMeInPage } from "../../browser/chatgpt.js";
+import { assertNoDaemon } from "../../daemon/client.js";
 
 export interface AdoptOptions {
   profile?: string;
@@ -22,6 +23,7 @@ export interface AdoptOptions {
  * signed-in account with no separate login flow.
  */
 export async function adoptCommand(opts: AdoptOptions): Promise<number> {
+  await assertNoDaemon("adopt");
   const app = findChatGptApp();
   if (!app) {
     console.error(chalk.red("✖ ChatGPT desktop app not found."));

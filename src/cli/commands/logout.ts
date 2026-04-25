@@ -2,6 +2,7 @@ import { rmSync, existsSync } from "node:fs";
 import chalk from "chalk";
 import prompts from "prompts";
 import { profileDir } from "../../store/paths.js";
+import { assertNoDaemon } from "../../daemon/client.js";
 
 export interface LogoutOptions {
   profile?: string;
@@ -9,6 +10,7 @@ export interface LogoutOptions {
 }
 
 export async function logoutCommand(opts: LogoutOptions): Promise<number> {
+  await assertNoDaemon("logout");
   const dir = profileDir(opts.profile);
   if (!existsSync(dir)) {
     console.log(chalk.dim("No profile to remove."));

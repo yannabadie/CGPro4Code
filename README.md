@@ -146,9 +146,17 @@ cgpro daemon status        # pid, uptime, current conversation, busy/idle
 cgpro daemon stop          # graceful: POST /shutdown then SIGTERM if needed
 ```
 
-`cgpro ask` and `cgpro chat` auto-detect the daemon. Pass `--no-daemon`
-to force a cold start. The daemon binds to `127.0.0.1` only and
-authenticates every request with a 256-bit token from `~/.cgpro/daemon.json`.
+`cgpro ask` auto-detects the daemon. Pass `--no-daemon` to force a cold
+start. The daemon binds to `127.0.0.1` only and authenticates every
+request with a 256-bit token from `~/.cgpro/daemon.json`.
+
+> **Mutual exclusion.** The daemon holds the Chromium profile lock. While
+> it is running, `status`, `models`, `doctor`, `adopt`, `login`, `logout`,
+> `chat`, and `thread sync` will refuse with `Stop the daemon first`.
+> Run `cgpro daemon stop` to free the profile, do the work, then
+> `cgpro daemon start` again. Only `ask` (which routes through the
+> daemon's HTTP API) and `thread list` (cached) are safe with the
+> daemon up.
 
 ## Plugin: Claude Code
 

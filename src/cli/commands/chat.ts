@@ -17,6 +17,7 @@ import { findThread, saveThread } from "../../store/threads.js";
 import { loadConfig } from "../../store/config.js";
 import { NotLoggedInError, TurnTimeoutError } from "../../errors.js";
 import { renderMarkdown } from "../../core/render/markdown.js";
+import { assertNoDaemon } from "../../daemon/client.js";
 
 export interface ChatCliOptions {
   model?: string;
@@ -31,6 +32,10 @@ export interface ChatCliOptions {
 }
 
 export async function chatCommand(opts: ChatCliOptions): Promise<number> {
+  // Chat keeps a persistent BrowserContext across many turns; routing
+  // it through the daemon would require a streaming multi-turn API
+  // that the daemon doesn't expose yet. Until then, refuse cleanly.
+  await assertNoDaemon("chat");
   const cfg = loadConfig();
   const headless = opts.headed ? false : opts.headless ?? cfg.defaultHeadless;
   let webEnabled = opts.noWeb ? false : opts.web ?? cfg.defaultWeb;

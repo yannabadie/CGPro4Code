@@ -15,6 +15,7 @@ import { fetchRemoteConversations } from "../../api/conversations.js";
 import { openSession } from "../../browser/session.js";
 import { goHome, isLoggedIn } from "../../browser/chatgpt.js";
 import { NotLoggedInError } from "../../errors.js";
+import { assertNoDaemon } from "../../daemon/client.js";
 
 export interface ListThreadsOptions {
   json?: boolean;
@@ -93,6 +94,7 @@ export interface SyncThreadsOptions {
 }
 
 export async function syncThreadsCmd(opts: SyncThreadsOptions): Promise<number> {
+  await assertNoDaemon("thread sync");
   const session = await openSession({
     headed: !opts.headless,
     profilePath: opts.profile,

@@ -3,6 +3,7 @@ import ora from "ora";
 import { openSession } from "../../browser/session.js";
 import { goHome, isLoggedIn } from "../../browser/chatgpt.js";
 import { SELECTORS, type SelectorSet } from "../../browser/selectors.js";
+import { assertNoDaemon } from "../../daemon/client.js";
 
 export interface DoctorOptions {
   profile?: string;
@@ -10,6 +11,7 @@ export interface DoctorOptions {
 }
 
 export async function doctorCommand(opts: DoctorOptions): Promise<number> {
+  await assertNoDaemon("doctor");
   const session = await openSession({ headed: !!opts.headed, profilePath: opts.profile });
   const spinner = ora("Auditing selectors against chatgpt.com…").start();
   let exitCode = 0;
