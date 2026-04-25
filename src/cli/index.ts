@@ -7,6 +7,7 @@ import { loginCommand } from "./commands/login.js";
 import { statusCommand } from "./commands/status.js";
 import { modelsCommand } from "./commands/models.js";
 import { askCommand } from "./commands/ask.js";
+import { chatCommand } from "./commands/chat.js";
 import {
   listThreadsCmd,
   removeThreadCmd,
@@ -73,6 +74,23 @@ program
   .action(async (promptParts: string[], opts) => {
     const promptArg = (promptParts ?? []).join(" ").trim();
     const code = await runOrExit(() => askCommand(promptArg, opts));
+    process.exit(code);
+  });
+
+program
+  .command("chat")
+  .description("Interactive REPL: multi-turn conversation with one open browser page.")
+  .option("-m, --model <slug>", "model slug (default: GPT-5.5 Pro)")
+  .option("--web", "enable web search (default)")
+  .option("--no-web", "disable web search")
+  .option("--headed", "show the browser window")
+  .option("--headless", "force headless mode")
+  .option("--profile <path>", "override the default profile directory")
+  .option("--resume <name|id>", "resume an existing conversation")
+  .option("--timeout <seconds>", "max wait per turn", (v) => parseInt(v, 10))
+  .option("--render", "render markdown after each completed turn")
+  .action(async (opts) => {
+    const code = await runOrExit(() => chatCommand(opts));
     process.exit(code);
   });
 
