@@ -4,6 +4,8 @@ import chalk from "chalk";
 import { VERSION } from "../version.js";
 import { CgproError } from "../errors.js";
 import { loginCommand } from "./commands/login.js";
+import { statusCommand } from "./commands/status.js";
+import { modelsCommand } from "./commands/models.js";
 
 const program = new Command();
 
@@ -21,6 +23,25 @@ program
   .option("--timeout <seconds>", "max wait for sign-in", (v) => parseInt(v, 10), 300)
   .action(async (opts) => {
     const code = await runOrExit(() => loginCommand(opts));
+    process.exit(code);
+  });
+
+program
+  .command("status")
+  .description("Show current session health, plan, and model availability.")
+  .option("--profile <path>", "override the default profile directory")
+  .action(async (opts) => {
+    const code = await runOrExit(() => statusCommand(opts));
+    process.exit(code);
+  });
+
+program
+  .command("models")
+  .description("List models available to the current account.")
+  .option("--profile <path>", "override the default profile directory")
+  .option("--json", "emit JSON instead of a table", false)
+  .action(async (opts) => {
+    const code = await runOrExit(() => modelsCommand(opts));
     process.exit(code);
   });
 
