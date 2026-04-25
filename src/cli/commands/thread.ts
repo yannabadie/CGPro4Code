@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import ora from "ora";
 import {
   findThread,
   listThreads,
@@ -6,8 +7,31 @@ import {
   renameThread,
   saveThread,
 } from "../../store/threads.js";
+import {
+  readConversationsCache,
+  writeConversationsCache,
+} from "../../store/conversations-cache.js";
+import { fetchRemoteConversations } from "../../api/conversations.js";
+import { openSession } from "../../browser/session.js";
+import { goHome, isLoggedIn } from "../../browser/chatgpt.js";
+import { NotLoggedInError } from "../../errors.js";
 
-export function listThreadsCmd(opts: { json?: boolean }): number {
+export interface ListThreadsOptions {
+  json?: boolean;
+  /** Show the chatgpt.com remote list instead of local saved bookmarks. */
+  remote?: boolean;
+  /** With --remote: refresh the cache by talking to chatgpt.com first. */
+  refresh?: boolean;
+  /** With --remote+--refresh: max rows to fetch. */
+  limit?: number;
+  profile?: string;
+  headless?: boolean;
+}
+
+export async function listThreadsCmd(opts: ListThreadsOptions): Promise<number> {
+  if (opts.remote) {
+    return await listRemoteCmd(opts);
+  }
   const threads = listThreads();
   if (opts.json) {
     process.stdout.write(JSON.stringify(threads, null, 2) + "\n");
@@ -27,6 +51,90 @@ export function listThreadsCmd(opts: { json?: boolean }): number {
     console.log(`  ${t.name.padEnd(widthName)}${(t.model ?? "—").padEnd(18)}${t.id}`);
   }
   return 0;
+}
+
+async function listRemoteCmd(opts: ListThreadsOptions): Promise<number> {
+  if (opts.refresh) {
+    const code = await syncThreadsCmd({
+      profile: opts.profile,
+      headless: opts.headless,
+      limit: opts.limit,
+      json: false,
+    });
+    if (code !== 0) return code;
+  }
+  const cache = readConversationsCache();
+  if (!cache) {
+    console.log(chalk.dim("(no remote cache yet)"));
+    console.log(chalk.dim("Run `cgpro thread sync` to populate it."));
+    return 0;
+  }
+  if (opts.json) {
+    process.stdout.write(JSON.stringify(cache, null, 2) + "\n");
+    return 0;
+  }
+  console.log(
+    chalk.bold(`Remote conversations`) +
+      chalk.dim(` (cached ${cache.fetchedAt}, ${cache.count} rows)`),
+  );
+  for (const c of cache.conversations) {
+    const date = c.updatedAt ? c.updatedAt.slice(0, 10) : "          ";
+    const archived = c.isArchived ? chalk.dim(" [archived]") : "";
+    console.log(`  ${chalk.dim(date)}  ${c.id}  ${c.title}${archived}`);
+  }
+  return 0;
+}
+
+export interface SyncThreadsOptions {
+  profile?: string;
+  headless?: boolean;
+  limit?: number;
+  json?: boolean;
+}
+
+export async function syncThreadsCmd(opts: SyncThreadsOptions): Promise<number> {
+  const session = await openSession({
+    headed: !opts.headless,
+    profilePath: opts.profile,
+    background: true,
+  });
+  const spinner = ora("Loading chatgpt.com…").start();
+  try {
+    await goHome(session.page);
+    if (!(await isLoggedIn(session.page, 8_000))) {
+      spinner.fail("Not signed in.");
+      throw new NotLoggedInError();
+    }
+    spinner.text = "Fetching conversations…";
+    const conversations = await fetchRemoteConversations(session.page, {
+      limit: opts.limit ?? 100,
+    });
+    writeConversationsCache(conversations);
+    const sourceCounts = conversations.reduce<Record<string, number>>((acc, c) => {
+      acc[c.source] = (acc[c.source] ?? 0) + 1;
+      return acc;
+    }, {});
+    const sourceNote = Object.entries(sourceCounts)
+      .map(([k, v]) => `${v} via ${k}`)
+      .join(", ");
+    spinner.succeed(
+      `Synced ${conversations.length} conversation${conversations.length === 1 ? "" : "s"}` +
+        (sourceNote ? chalk.dim(` (${sourceNote})`) : ""),
+    );
+    if (opts.json) {
+      process.stdout.write(JSON.stringify(conversations, null, 2) + "\n");
+    } else if (conversations.length === 0) {
+      console.log(
+        chalk.yellow(
+          "Sidebar appears empty. If you can see chats in the chatgpt.com UI,\n" +
+            "set CGPRO_DEBUG=1 and re-run to see which selectors / endpoints failed.",
+        ),
+      );
+    }
+    return 0;
+  } finally {
+    await session.close();
+  }
 }
 
 export function showThreadCmd(nameOrId: string, opts: { json?: boolean }): number {

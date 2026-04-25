@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import ora from "ora";
-import { runAsk, type AskOptions } from "../../core/orchestrator.js";
+import { runAsk, type AskOptions, type AskRunner } from "../../core/orchestrator.js";
 import { renderMarkdown } from "../../core/render/markdown.js";
 import { findThread, saveThread } from "../../store/threads.js";
 import { loadConfig } from "../../store/config.js";
@@ -9,6 +9,7 @@ import {
   getActiveConversationId,
   saveActiveConversationId,
 } from "../../store/session.js";
+import { askViaDaemon, getLiveDaemon } from "../../daemon/client.js";
 
 export interface AskCliOptions {
   model?: string;
@@ -28,6 +29,8 @@ export interface AskCliOptions {
   newSession?: boolean;
   /** Hide the browser window off-screen. */
   background?: boolean;
+  /** Force a cold start even if a daemon is running. */
+  noDaemon?: boolean;
 }
 
 export async function askCommand(promptArg: string, opts: AskCliOptions): Promise<number> {
@@ -75,9 +78,17 @@ export async function askCommand(promptArg: string, opts: AskCliOptions): Promis
   return runHumanMode(askOpts, opts);
 }
 
+async function buildRunner(askOpts: AskOptions, opts: AskCliOptions): Promise<AskRunner> {
+  if (!opts.noDaemon) {
+    const daemon = await getLiveDaemon();
+    if (daemon) return askViaDaemon(daemon, askOpts);
+  }
+  return runAsk(askOpts);
+}
+
 async function runHumanMode(askOpts: AskOptions, opts: AskCliOptions): Promise<number> {
   const spinner = ora({ text: "Thinking…", color: "cyan" }).start();
-  const runner = runAsk(askOpts);
+  const runner = await buildRunner(askOpts, opts);
 
   let firstDelta = true;
   let buffer = "";
@@ -140,7 +151,7 @@ async function runHumanMode(askOpts: AskOptions, opts: AskCliOptions): Promise<n
 }
 
 async function runJsonMode(askOpts: AskOptions, opts: AskCliOptions): Promise<number> {
-  const runner = runAsk(askOpts);
+  const runner = await buildRunner(askOpts, opts);
   try {
     for await (const ev of runner.events) {
       process.stdout.write(JSON.stringify(ev) + "\n");

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace",
+  "name": "cgpro",
+  "description": "ChatGPT 5.5 Pro from your terminal — single-plugin marketplace.",
+  "owner": {
+    "name": "Yann Abadie",
+    "email": "yann.abadie@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "cgpro",
+      "source": ".",
+      "version": "0.2.0",
+      "description": "Talk to ChatGPT 5.5 Pro (extended reasoning + live web search) from Claude Code via the cgpro CLI.",
+      "category": "productivity",
+      "homepage": "https://github.com/yannabadie/CGPro4Code"
+    }
+  ]
+}

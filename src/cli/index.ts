@@ -12,11 +12,18 @@ import { chatCommand } from "./commands/chat.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { logoutCommand } from "./commands/logout.js";
 import {
+  daemonServerCmd,
+  daemonStartCmd,
+  daemonStatusCmd,
+  daemonStopCmd,
+} from "./commands/daemon.js";
+import {
   listThreadsCmd,
   removeThreadCmd,
   renameThreadCmd,
   saveThreadCmd,
   showThreadCmd,
+  syncThreadsCmd,
 } from "./commands/thread.js";
 
 const program = new Command();
@@ -90,6 +97,7 @@ program
   .option("--render", "render markdown after the stream completes")
   .option("--background", "open the browser off-screen so it never pops up in front")
   .option("--new-session", "start a fresh conversation (do not auto-resume the recent shell session)")
+  .option("--no-daemon", "force a cold-start browser even if a daemon is running")
   .action(async (promptParts: string[], opts) => {
     const promptArg = (promptParts ?? []).join(" ").trim();
     const code = await runOrExit(() => askCommand(promptArg, opts));
@@ -137,10 +145,27 @@ const thread = program.command("thread").description("Manage saved conversations
 
 thread
   .command("list")
-  .description("List saved threads.")
+  .description("List saved threads (or `--remote` for the chatgpt.com sidebar).")
   .option("--json", "emit JSON")
+  .option("--remote", "list the chatgpt.com conversation history (cached)")
+  .option("--refresh", "with --remote: refresh the cache from chatgpt.com first")
+  .option("--limit <n>", "with --refresh: max rows to fetch", (v) => parseInt(v, 10))
+  .option("--profile <path>", "override the default profile directory")
+  .option("--headless", "force headless when refreshing")
   .action(async (opts) => {
-    const code = await runOrExit(async () => listThreadsCmd(opts));
+    const code = await runOrExit(() => listThreadsCmd(opts));
+    process.exit(code);
+  });
+
+thread
+  .command("sync")
+  .description("Pull the chatgpt.com conversation list into the local cache.")
+  .option("--json", "emit JSON")
+  .option("--limit <n>", "max rows to fetch (default 100)", (v) => parseInt(v, 10))
+  .option("--profile <path>", "override the default profile directory")
+  .option("--headless", "force headless mode")
+  .action(async (opts) => {
+    const code = await runOrExit(() => syncThreadsCmd(opts));
     process.exit(code);
   });
 
@@ -175,6 +200,47 @@ thread
   .action(async (id: string, name: string) => {
     const code = await runOrExit(() => saveThreadCmd(id, name));
     process.exit(code);
+  });
+
+const daemon = program
+  .command("daemon")
+  .description("Long-lived browser process so `ask` doesn't pay cold-start cost.");
+
+daemon
+  .command("start")
+  .description("Spawn the daemon (idempotent — exits 0 if already running).")
+  .option("--profile <path>", "override the default profile directory")
+  .option("--no-background", "open the daemon's browser window in front")
+  .action(async (opts) => {
+    const code = await runOrExit(() => daemonStartCmd(opts));
+    process.exit(code);
+  });
+
+daemon
+  .command("stop")
+  .description("Stop the running daemon.")
+  .action(async () => {
+    const code = await runOrExit(() => daemonStopCmd());
+    process.exit(code);
+  });
+
+daemon
+  .command("status")
+  .description("Show daemon state.")
+  .option("--json", "emit JSON")
+  .action(async (opts) => {
+    const code = await runOrExit(() => daemonStatusCmd(opts));
+    process.exit(code);
+  });
+
+// Hidden — only invoked by `daemon start` after spawning a child.
+program
+  .command("daemon-server", { hidden: true })
+  .option("--profile <path>")
+  .option("--no-background")
+  .action(async (opts) => {
+    // Never exits; runDaemonServer keeps the loop alive.
+    await daemonServerCmd(opts);
   });
 
 program.action(() => {

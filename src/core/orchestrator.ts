@@ -47,20 +47,42 @@ export interface AskRunner {
 /**
  * Drives a single ask turn end to end. Yields stream events to the caller
  * and resolves a final summary once the turn completes (or fails).
+ *
+ * Cold-start path: opens a fresh browser session, runs the turn, closes it.
+ * Use `runAskOnSession` to reuse a long-lived session (daemon mode).
  */
 export function runAsk(opts: AskOptions): AskRunner {
+  return runAskInner(opts, null, true);
+}
+
+/**
+ * Same as `runAsk` but reuses an existing browser session that the caller
+ * owns and won't be closed when the turn completes. Used by the daemon
+ * server so multiple turns can share one warm Chromium.
+ */
+export function runAskOnSession(opts: AskOptions, session: Session): AskRunner {
+  return runAskInner(opts, session, false);
+}
+
+function runAskInner(
+  opts: AskOptions,
+  providedSession: Session | null,
+  closeOnFinish: boolean,
+): AskRunner {
   const emitter = new StreamEmitter();
   const collected: StreamEvent[] = [];
 
-  let session: Session | null = null;
+  let session: Session | null = providedSession;
   let cancelled = false;
 
   const result: Promise<AskResult> = (async () => {
-    session = await openSession({
-      headed: !opts.headless,
-      profilePath: opts.profile,
-      background: opts.background,
-    });
+    if (!session) {
+      session = await openSession({
+        headed: !opts.headless,
+        profilePath: opts.profile,
+        background: opts.background,
+      });
+    }
     setActiveEmitter(session.context, emitter);
     try {
       const page = session.page;
@@ -172,7 +194,12 @@ export function runAsk(opts: AskOptions): AskRunner {
       emitter.push({ type: "error", message });
       throw err;
     } finally {
-      await session?.close().catch(() => {});
+      // Reset the active emitter so a stale binding doesn't leak into
+      // the next turn on the same context (daemon mode).
+      if (session) setActiveEmitter(session.context, null);
+      if (closeOnFinish) {
+        await session?.close().catch(() => {});
+      }
     }
   })();
 
@@ -183,10 +210,15 @@ export function runAsk(opts: AskOptions): AskRunner {
     result,
     async cancel(): Promise<void> {
       cancelled = true;
-      try {
-        await session?.close();
-      } catch {
-        /* swallow */
+      // In cold-start mode we own the session, so killing it cancels.
+      // In daemon mode we just stop streaming; the daemon decides what
+      // to do with the in-flight turn.
+      if (closeOnFinish) {
+        try {
+          await session?.close();
+        } catch {
+          /* swallow */
+        }
       }
     },
   };

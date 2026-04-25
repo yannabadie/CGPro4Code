@@ -1,6 +1,6 @@
 {
   "name": "cgpro",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "CLI for ChatGPT Pro: drives chatgpt.com with a real Chrome session to expose GPT-5.5 Pro (extended thinking + live web search) from your terminal",
   "type": "module",
   "bin": {
