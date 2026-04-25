@@ -1,5 +1,4 @@
-import type { Page } from "playwright";
-import { CHATGPT_HOME } from "../browser/chatgpt.js";
+import type { Page } from "patchright";
 
 export interface MeResponse {
   id?: string;
@@ -15,24 +14,22 @@ export interface MeResponse {
 }
 
 /**
- * Fetches the current account info via /backend-api/me. Cookies + Bearer
- * are auto-attached by the page's request context.
+ * Fetches /backend-api/me from inside the page's JS context so the
+ * React app's `Authorization: Bearer …` JWT is auto-attached.
+ * `accessToken` is accepted for API parity but ignored — the page-side
+ * fetch already has the right credentials.
  */
-export async function fetchMe(page: Page, accessToken?: string): Promise<MeResponse | null> {
+export async function fetchMe(page: Page, _accessToken?: string): Promise<MeResponse | null> {
   try {
-    const headers: Record<string, string> = {
-      Accept: "application/json",
-      "OAI-Language": "en-US",
-    };
-    if (accessToken) {
-      headers["Authorization"] = `Bearer ${accessToken}`;
-    }
-    const resp = await page.context().request.get(`${CHATGPT_HOME}backend-api/me`, {
-      headers,
-      timeout: 10_000,
+    const result = await page.evaluate(async () => {
+      const r = await fetch("/backend-api/me", {
+        headers: { Accept: "application/json", "OAI-Language": "en-US" },
+        credentials: "include",
+      });
+      if (!r.ok) return null;
+      return await r.json();
     });
-    if (!resp.ok()) return null;
-    return (await resp.json()) as MeResponse;
+    return (result ?? null) as MeResponse | null;
   } catch {
     return null;
   }

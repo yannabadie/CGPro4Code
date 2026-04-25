@@ -4,6 +4,11 @@ import { runAsk, type AskOptions } from "../../core/orchestrator.js";
 import { renderMarkdown } from "../../core/render/markdown.js";
 import { findThread, saveThread } from "../../store/threads.js";
 import { loadConfig } from "../../store/config.js";
+import {
+  clearActiveConversation,
+  getActiveConversationId,
+  saveActiveConversationId,
+} from "../../store/session.js";
 
 export interface AskCliOptions {
   model?: string;
@@ -19,6 +24,10 @@ export interface AskCliOptions {
   json?: boolean;
   noStream?: boolean;
   render?: boolean;
+  /** Skip auto-resume — start a brand-new conversation. */
+  newSession?: boolean;
+  /** Hide the browser window off-screen. */
+  background?: boolean;
 }
 
 export async function askCommand(promptArg: string, opts: AskCliOptions): Promise<number> {
@@ -32,7 +41,20 @@ export async function askCommand(promptArg: string, opts: AskCliOptions): Promis
 
   const web = opts.noWeb ? false : opts.web ?? cfg.defaultWeb;
   const headless = opts.headed ? false : opts.headless ?? cfg.defaultHeadless;
-  const conversationId = opts.resume ? resolveConvId(opts.resume) : undefined;
+  // Conversation resolution priority:
+  //   1. --new-session wipes any ambient session and starts fresh
+  //   2. explicit --resume <name|id> wins
+  //   3. otherwise auto-resume the recent persistent session if any.
+  if (opts.newSession) {
+    clearActiveConversation();
+  }
+  let conversationId: string | undefined;
+  if (opts.resume) {
+    conversationId = resolveConvId(opts.resume);
+  } else if (!opts.newSession) {
+    const sess = getActiveConversationId();
+    if (sess) conversationId = sess;
+  }
 
   const askOpts: AskOptions = {
     prompt,
@@ -42,6 +64,7 @@ export async function askCommand(promptArg: string, opts: AskCliOptions): Promis
     conversationId,
     timeoutSec: opts.timeout ?? cfg.timeoutSec,
     headless,
+    background: opts.background,
     profile: opts.profile,
   };
 
@@ -81,17 +104,30 @@ async function runHumanMode(askOpts: AskOptions, opts: AskCliOptions): Promise<n
         spinner.fail(ev.message);
         return 1;
       } else if (ev.type === "done") {
-        if (!firstDelta && writeStream) process.stdout.write("\n");
-        if (opts.render || opts.noStream) {
-          spinner.stop();
-          const text = ev.finalText ?? buffer;
-          process.stdout.write(renderMarkdown(text) + "\n");
+        spinner.stop();
+        const text = ev.finalText ?? buffer;
+        // Emit the final answer when:
+        //  - no deltas were ever printed (SSE interceptor missed the URL,
+        //    DOM gave us the full text in one go), or
+        //  - the user explicitly asked for buffered/rendered output.
+        const needsEmit = firstDelta || opts.render || opts.noStream;
+        if (needsEmit && text.length > 0) {
+          if (opts.render || opts.noStream) {
+            process.stdout.write(renderMarkdown(text) + "\n");
+          } else {
+            process.stdout.write(text + "\n");
+          }
+        } else if (!firstDelta && writeStream) {
+          process.stdout.write("\n");
         }
-        if (firstDelta) spinner.stop();
       }
     }
 
     const summary = await runner.result;
+    if (summary.conversationId) {
+      // Auto-thread so the next ask in this Claude Code session continues here.
+      saveActiveConversationId(summary.conversationId);
+    }
     if (opts.save && summary.conversationId) {
       await saveThread(opts.save, summary.conversationId, askOpts.model);
       console.log(chalk.dim(`\nSaved conversation as "${opts.save}".`));
@@ -110,6 +146,9 @@ async function runJsonMode(askOpts: AskOptions, opts: AskCliOptions): Promise<nu
       process.stdout.write(JSON.stringify(ev) + "\n");
     }
     const summary = await runner.result;
+    if (summary.conversationId) {
+      saveActiveConversationId(summary.conversationId);
+    }
     if (opts.save && summary.conversationId) {
       await saveThread(opts.save, summary.conversationId, askOpts.model);
     }

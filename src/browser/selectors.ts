@@ -22,6 +22,10 @@ export interface SelectorSet {
   assistantMessages: string[];
   /** All message bubbles (any role) in the current conversation. */
   anyMessages: string[];
+  /** Action bar (copy / regenerate / good / bad) shown on a completed assistant response. */
+  assistantActionBar: string[];
+  /** Markdown-rendered body inside an assistant bubble. */
+  assistantMarkdown: string[];
   /** Conversation history list in the sidebar. */
   conversationList: string[];
   /** Individual conversation item in the sidebar. */
@@ -73,9 +77,25 @@ export const SELECTORS: SelectorSet = {
   ],
   assistantMessages: [
     'div[data-message-author-role="assistant"]',
+    '[data-message-author-role="assistant"]',
     'main article:has([data-message-author-role="assistant"])',
   ],
-  anyMessages: ["div[data-message-author-role]", "main article"],
+  anyMessages: [
+    "div[data-message-author-role]",
+    "[data-message-author-role]",
+    'div[data-testid^="conversation-turn"]',
+    "main article",
+  ],
+  assistantActionBar: [
+    'div[role="group"][aria-label*="Actions sur la"]',
+    'div[role="group"][aria-label*="Actions on"]',
+    'div[role="group"][aria-label*="Actions"]',
+  ],
+  assistantMarkdown: [
+    "div.markdown",
+    '[data-message-author-role="assistant"] .markdown',
+    '[data-message-author-role="assistant"]',
+  ],
   conversationList: [
     '[data-testid="conversation-list"]',
     'nav[aria-label="Chat history"]',

@@ -4,6 +4,7 @@ import chalk from "chalk";
 import { VERSION } from "../version.js";
 import { CgproError } from "../errors.js";
 import { loginCommand } from "./commands/login.js";
+import { adoptCommand } from "./commands/adopt.js";
 import { statusCommand } from "./commands/status.js";
 import { modelsCommand } from "./commands/models.js";
 import { askCommand } from "./commands/ask.js";
@@ -38,9 +39,22 @@ program
   });
 
 program
+  .command("adopt")
+  .description(
+    "Import the local ChatGPT desktop app's session into the cgpro profile (recommended).",
+  )
+  .option("--profile <path>", "override the default profile directory")
+  .option("--kill-app", "force-close the ChatGPT app if it's running")
+  .action(async (opts) => {
+    const code = await runOrExit(() => adoptCommand(opts));
+    process.exit(code);
+  });
+
+program
   .command("status")
   .description("Show current session health, plan, and model availability.")
   .option("--profile <path>", "override the default profile directory")
+  .option("--headless", "run headless (faster but fingerprint may be challenged)")
   .action(async (opts) => {
     const code = await runOrExit(() => statusCommand(opts));
     process.exit(code);
@@ -50,6 +64,7 @@ program
   .command("models")
   .description("List models available to the current account.")
   .option("--profile <path>", "override the default profile directory")
+  .option("--headless", "run headless")
   .option("--json", "emit JSON instead of a table", false)
   .action(async (opts) => {
     const code = await runOrExit(() => modelsCommand(opts));
@@ -73,6 +88,8 @@ program
   .option("--json", "emit NDJSON events instead of human output")
   .option("--no-stream", "buffer until done, then print")
   .option("--render", "render markdown after the stream completes")
+  .option("--background", "open the browser off-screen so it never pops up in front")
+  .option("--new-session", "start a fresh conversation (do not auto-resume the recent shell session)")
   .action(async (promptParts: string[], opts) => {
     const promptArg = (promptParts ?? []).join(" ").trim();
     const code = await runOrExit(() => askCommand(promptArg, opts));

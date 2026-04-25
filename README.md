@@ -1,209 +1,154 @@
 # cgpro
 
-> **ChatGPT Pro from your terminal** — drives a real Chrome session against
-> `chatgpt.com` so you can use **GPT-5.5 Pro** (extended thinking + live web
-> search) from the shell, with your existing ChatGPT Pro subscription.
+**ChatGPT Pro depuis votre terminal.** Pilote `chatgpt.com` avec une vraie session Chrome pour exposer **GPT-5.5 Pro** (réflexion étendue + recherche web) dans le shell, avec votre abonnement ChatGPT Pro existant.
 
 ```
-$ cgpro ask --web "what's the top story on Hacker News right now, in 2 lines?"
-Thinking…
-gpt ▸ The current top story on HN is "OpenAI ships GPT-5.5 Pro to API"
-       (892 points), discussing the just-announced API rollout and pricing.
+$ cgpro ask --web "top story sur Hacker News, en 2 lignes"
+gpt ▸ "OpenAI ships GPT-5.5 Pro to API" (892 pts) — discussion sur le rollout
+       et la tarification annoncés ce matin.
 ```
 
-## Why this exists
+## Pourquoi
 
-As of April 2026:
+Au 25 avril 2026, **GPT-5.5 Pro n'existe que dans l'app ChatGPT** (web + mobile). Pas dans l'API publique, pas dans Codex CLI. Le seul moyen de le scripter, c'est de piloter la même UI qu'un utilisateur connecté. C'est ce que fait `cgpro`.
 
-- **GPT-5.5 Pro** lives only in the consumer ChatGPT app (web + mobile). It is
-  not in the public OpenAI API yet, and **not** exposed by the official Codex
-  CLI either (which serves the standard `gpt-5.5` Thinking model).
-- The only practical way to script `gpt-5.5-pro` from a terminal is to drive
-  the same UI a logged-in user would.
+## Installation
 
-`cgpro` does that, via **Playwright + a real Chrome instance with a persistent
-profile**. You log in once with `cgpro login`; every subsequent `ask` or
-`chat` reuses the same session. Cloudflare/sentinel anti-bot tokens are
-produced by the page's own JavaScript — we don't reimplement them, which is
-what makes this approach **stable** across OpenAI's frequent backend changes.
-
-## Install
-
-Requirements: Node.js ≥ 20 and Chrome (or Chromium) installed.
+Pré-requis : **Node.js ≥ 20** et **Chrome** installé.
 
 ```bash
 git clone https://github.com/yannabadie/CGPro4Code.git cgpro
 cd cgpro
 npm install
-npx playwright install chromium    # bundled fallback if Chrome is missing
 npm run build
-npm link                           # installs the `cgpro` command globally
+npm link
 ```
 
-After `npm link`, the `cgpro` command is on your `PATH`. If you skip
-`npm link`, run it from the repo with `node dist/cli/index.js …` instead.
+`npm link` met la commande `cgpro` sur votre `PATH`. Sinon : `node dist/cli/index.js …`.
 
-## First run
+## Premier run
 
 ```bash
 cgpro login
 ```
 
-A Chrome window opens at `chatgpt.com`. Sign in (handle 2FA / Cloudflare if
-needed). Once the chat home is visible the command exits with `✔ Logged in`.
+Chrome s'ouvre sur `chatgpt.com`. Vous vous connectez (mot de passe, 2FA, Cloudflare si besoin). La commande détecte la session et se ferme.
 
 ```bash
 cgpro status
-# Account:      you@example.com
+# Account:      vous@exemple.com
 # Plan:         pro
-# Token until:  …
-# Models:       17 available
-# GPT-5.5 Pro:  ✓ (slug: gpt-5-5-pro)
+# GPT-5.5 Pro:  ✓
 ```
 
-## Usage
+## Commandes
 
-### One-shot prompt
+| Commande | Effet |
+|---|---|
+| `cgpro login` | Ouvre Chrome, vous vous connectez (à faire une fois). |
+| `cgpro logout` | Efface le profil local. |
+| `cgpro status` | Email, plan, modèles disponibles, détection GPT-5.5 Pro. |
+| `cgpro models` | Liste les modèles dispo pour votre abonnement. |
+| `cgpro ask "..."` | Une question, une réponse streamée. |
+| `cgpro chat` | REPL multi-tours. |
+| `cgpro thread list/show/save/rm/rename` | Gestion des conversations sauvegardées. |
+| `cgpro doctor` | Audit des selectors contre le DOM live. |
+
+### `ask`
 
 ```bash
-cgpro ask "explain CRDTs in 3 bullet points"
-cgpro ask --web "today's weather in Lyon"
-cgpro ask --no-web "give me a strict TypeScript type for ISO-8601 dates"
-cgpro ask -i diagram.png "explain this architecture"
-echo "review this code" | cgpro ask < src/api/me.ts
+cgpro ask "explique les CRDT en 3 puces"
+cgpro ask --web "météo à Lyon aujourd'hui"
+cgpro ask --no-web "donne un type TypeScript strict pour les dates ISO-8601"
+cgpro ask -i schema.png "explique cette archi"
+echo "review ce code" | cgpro ask < src/api/me.ts
 cgpro ask --json "ping" | jq .
+cgpro ask --save mybranch "..."   # sauvegarde la conv sous ce nom
 ```
 
-### Interactive chat
+### `chat` (REPL)
 
 ```bash
 cgpro chat
-# you ▸ what's the safest way to migrate a 50M-row table to add a NOT NULL column?
-# gpt ▸ …
+# you ▸ ...
+# gpt ▸ ...
 # you ▸ :web off
 # you ▸ :save db-migrations
 # you ▸ :quit
 ```
 
-For multi-line prompts, end a line with a trailing backslash `\`. The next
-prompt will continue the same turn:
+Multi-ligne : terminez une ligne par `\` pour continuer sur la suivante.
 
-```text
-you ▸ first line of context \
-    ▸ second line \
-    ▸ now actually ask the question
+| Slash | Effet |
+|---|---|
+| `:web on/off` | Bascule la recherche web. |
+| `:model <slug>` | Change de modèle (réinitialise la conversation). |
+| `:reset` | Repart sur une nouvelle conversation. |
+| `:save <nom>` | Sauvegarde la conversation courante. |
+| `:thread` | Affiche l'UUID chatgpt.com de la conversation. |
+| `:quit` ou Ctrl+C | Quitter. |
+
+## Flags utiles
+
+| Flag | Défaut | Note |
+|---|---|---|
+| `--model <slug>` | `gpt-5-pro` | Auto-détecte le slug Pro de votre compte. |
+| `--web` / `--no-web` | `--web` | Recherche internet temps réel. |
+| `--headed` / `--headless` | headed | Headed = stable et ce qu'on voit. |
+| `--profile <path>` | `~/.cgpro/profile` | Pour gérer plusieurs comptes. |
+| `--resume <nom\|id>` | — | Reprend une conversation existante. |
+| `--save <nom>` | — | Sauvegarde la conversation. |
+| `--timeout <s>` | `600` | Wait max par tour. |
+| `--json` | off | Stream NDJSON. |
+| `--render` | off | Rend le markdown à la fin. |
+
+## Stockage local
+
+```
+~/.cgpro/
+├── profile/        # cookies, IndexedDB, session Chromium
+├── threads.json    # { nom: uuid_chatgpt }
+└── config.json     # défauts utilisateur
 ```
 
-Built-in slash commands:
+Rien n'est envoyé ailleurs que sur `chatgpt.com`.
 
-| Command          | Effect                                                  |
-| ---------------- | ------------------------------------------------------- |
-| `:web on/off`    | Toggle live web search                                  |
-| `:model <slug>`  | Switch model (resets the conversation)                  |
-| `:reset`         | Start a fresh conversation                              |
-| `:save <name>`   | Persist the current conversation under a name           |
-| `:thread`        | Show the current chatgpt.com conversation UUID          |
-| `:quit` / Ctrl+D | Exit                                                    |
+## Si ça casse
 
-### Threads
+OpenAI fait évoluer `chatgpt.com` régulièrement. Si un jour `cgpro ask` reste bloqué :
 
 ```bash
-cgpro thread list
-cgpro thread show db-migrations
-cgpro thread save <uuid> mybranch     # adopt an existing chatgpt.com thread
-cgpro chat --resume db-migrations     # continue the saved thread
-cgpro thread rm db-migrations
+cgpro doctor
 ```
 
-### Diagnostics
+Le premier `✖` indique le sélecteur cassé. Patchez la première entrée de la liste correspondante dans `src/browser/selectors.ts`, puis :
 
 ```bash
-cgpro status      # session + plan + GPT-5.5 Pro detection
-cgpro models      # list models the account has access to
-cgpro doctor      # audit selectors against live chatgpt.com DOM
-cgpro logout      # wipe the local profile
+npm run build
+cgpro ask "test"
 ```
 
-## Common flags
+C'est le **seul** fichier qui contient des sélecteurs DOM. Reste tout volontairement encapsulé pour absorber ces dérives.
 
-| Flag                      | Default            | Notes                                                      |
-| ------------------------- | ------------------ | ---------------------------------------------------------- |
-| `--model <slug>`          | `gpt-5-pro`        | Any slug from `cgpro models`                                |
-| `--web` / `--no-web`      | `--web` (on)       | Live internet search                                        |
-| `--headed` / `--headless` | headed             | Browser visibility — keep headed for max stability         |
-| `--profile <path>`        | `<env>/cgpro/profile` | Multi-account: pass a different dir                     |
-| `--resume <name|id>`      | —                  | Continue an existing conversation                           |
-| `--save <name>`           | —                  | Persist this conversation                                   |
-| `--timeout <secs>`        | `600`              | Max wait for the model to finish a turn                     |
-| `--json`                  | off                | NDJSON event stream                                         |
-| `--render`                | off                | Buffer + render markdown after stream completes             |
-| `--no-stream`             | off                | Buffer until done, then print                               |
+## Tests
 
-## Architecture
-
-```
-~/.cgpro/                   ← env-paths default location
-├── profile/                ← Chromium user data dir (cookies, IndexedDB)
-├── threads.json            ← name ↔ chatgpt.com UUID
-└── config.json             ← user defaults (model, web, headless, …)
+```bash
+npm test
 ```
 
-- **`src/browser/selectors.ts`** is the only file that knows DOM details.
-  When chatgpt.com ships a UI change, patch this file. `cgpro doctor` audits
-  it against the live page.
-- **Streaming** is captured by injecting a fetch interceptor (`addInitScript`)
-  that mirrors `/backend-api/conversation` SSE chunks into a Node binding.
-  The page issues the real request — we shadow-stream it.
-- **Composer** is driven via the page UI (typing into `#prompt-textarea`,
-  clicking the send button) so OpenAI's own JS produces the proof tokens.
+14 tests : SSE parser (delta, JSON-patch, parts cumulatifs, chunks fragmentés, JSON malformé), store des threads, intégrité des sélecteurs.
 
-See [`docs/superpowers/specs/2026-04-25-cgpro-design.md`](docs/superpowers/specs/2026-04-25-cgpro-design.md)
-for the full design doc and rationale.
+## Conformité
 
-## Stability
+`cgpro` se connecte avec **votre propre** abonnement ChatGPT via le flow de login officiel. Mêmes identifiants, même session, mêmes rate limits que l'app desktop. Usage personnel CLI.
 
-- Selectors have ordered fallback chains in `selectors.ts`.
-- The fetch interceptor is registered **once per browser context**, before any
-  navigation, so it catches the very first `/backend-api/conversation` POST.
-  Per-turn we just swap which emitter the binding routes to (no double-register
-  bug across REPL turns).
-- `cgpro doctor` is the first thing to run when something breaks.
-- Unit tests (`npm test`) cover the SSE parser, the threads store, and selector
-  shape integrity.
-- Live smoke (`CGPRO_LIVE=1 npm run test:live`) is opt-in and exercises a real
-  account — keep this disabled in CI by default.
+Pour la prod / multi-utilisateurs : utilisez l'[OpenAI Platform API](https://platform.openai.com/) quand GPT-5.5 Pro y arrivera.
 
-### First-run smoke checklist
+## Documentation interne
 
-After `cgpro login` succeeds, run these in order — each verifies a different
-layer:
+- Spec : [`docs/superpowers/specs/2026-04-25-cgpro-design.md`](docs/superpowers/specs/2026-04-25-cgpro-design.md)
+- Plan : [`docs/superpowers/plans/2026-04-25-cgpro-implementation-plan.md`](docs/superpowers/plans/2026-04-25-cgpro-implementation-plan.md)
 
-1. `cgpro status` — session JWT + plan + GPT-5.5 Pro detection.
-2. `cgpro doctor` — every selector resolves on the live DOM.
-3. `cgpro ask "ping in one word"` — composer typing + send + SSE stream + done.
-4. `cgpro ask --web "today's date in Lyon"` — web search toggle + sources.
-5. `cgpro chat` — open the REPL, send 3 turns, `:save smoke`, `:quit`. Re-open
-   with `cgpro chat --resume smoke` and confirm context is preserved.
+## Licence
 
-If step 3 hangs forever with no streaming, run `cgpro doctor` and look for
-the first `✖` — usually the composer or send-button selector drifted, and a
-one-line patch in `selectors.ts` fixes it.
-
-## Compliance
-
-This tool authenticates with **your own** ChatGPT subscription via the
-official chatgpt.com login flow. It does **not** re-sell, scrape, or amplify
-load. It is for personal CLI use only.
-
-You are responsible for using the tool in line with:
-
-- [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/)
-- [OpenAI Usage Policies](https://openai.com/policies/usage-policies/)
-
-For commercial / multi-user / high-volume needs, use the official
-[OpenAI Platform API](https://platform.openai.com/) when GPT-5.5 Pro lands
-there.
-
-## License
-
-MIT — see [LICENSE](./LICENSE).
+MIT — voir [LICENSE](./LICENSE).

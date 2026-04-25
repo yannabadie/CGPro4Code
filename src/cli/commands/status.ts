@@ -8,10 +8,16 @@ import { NotLoggedInError } from "../../errors.js";
 
 export interface StatusOptions {
   profile?: string;
+  headless?: boolean;
 }
 
 export async function statusCommand(opts: StatusOptions): Promise<number> {
-  const session = await openSession({ headed: false, profilePath: opts.profile });
+  // Default to headed — chatgpt.com challenges headless Chromium even
+  // with a warmed-up profile. Pass --headless to override.
+  const session = await openSession({
+    headed: !opts.headless,
+    profilePath: opts.profile,
+  });
   const spinner = ora("Checking session…").start();
   try {
     await goHome(session.page);

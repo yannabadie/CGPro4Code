@@ -2,14 +2,18 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { CONFIG_FILE, ensureDirs } from "./paths.js";
 
 export interface CgproConfig {
-  defaultModel: string;
+  /** Optional. When unset, chatgpt.com picks the user's account default. */
+  defaultModel?: string;
   defaultWeb: boolean;
   defaultHeadless: boolean;
   timeoutSec: number;
 }
 
 const DEFAULTS: CgproConfig = {
-  defaultModel: "gpt-5-pro",
+  // Intentionally undefined: ChatGPT Pro accounts default to gpt-5-5-pro
+  // server-side, and forcing a slug like "gpt-5-pro" via ?model= breaks
+  // when the slug isn't recognised. Pass --model to override.
+  defaultModel: undefined,
   defaultWeb: true,
   defaultHeadless: false,
   timeoutSec: 600,

@@ -1,8 +1,9 @@
-import type { Page } from "playwright";
+import type { Page } from "patchright";
 import { openSession, type Session } from "../browser/session.js";
-import { fetchAuthSession, goHome, isLoggedIn } from "../browser/chatgpt.js";
+import { goHome, isLoggedIn } from "../browser/chatgpt.js";
 import {
   currentConversationId,
+  latestAssistantModelSlug,
   openConversation,
   readLatestAssistantText,
   sendPrompt,
@@ -14,8 +15,8 @@ import {
   StreamEmitter,
   type StreamEvent,
 } from "./stream.js";
-import { fetchModels, findProSlug } from "../api/models.js";
-import { ModelUnavailableError, NotLoggedInError, TurnTimeoutError } from "../errors.js";
+import { NotLoggedInError, TurnTimeoutError } from "../errors.js";
+import { SELECTORS as SELECTORS_DUMP } from "../browser/selectors.js";
 
 export interface AskOptions {
   prompt: string;
@@ -26,6 +27,8 @@ export interface AskOptions {
   conversationId?: string;
   timeoutSec: number;
   headless: boolean;
+  /** Hide the browser window off-screen for unobtrusive runs. */
+  background?: boolean;
   profile?: string;
 }
 
@@ -53,64 +56,115 @@ export function runAsk(opts: AskOptions): AskRunner {
   let cancelled = false;
 
   const result: Promise<AskResult> = (async () => {
-    session = await openSession({ headed: !opts.headless, profilePath: opts.profile });
+    session = await openSession({
+      headed: !opts.headless,
+      profilePath: opts.profile,
+      background: opts.background,
+    });
     setActiveEmitter(session.context, emitter);
     try {
       const page = session.page;
+      const debug = process.env.CGPRO_DEBUG === "1";
+      const log = (m: string): void => {
+        if (debug) console.error("[cgpro]", m);
+      };
+      log("goHome…");
       await goHome(page);
+      log(`goHome done, url=${page.url()}`);
       if (!(await isLoggedIn(page, 10_000))) {
         throw new NotLoggedInError();
       }
+      log("isLoggedIn ✓");
 
-      // Resolve the right model slug if the caller asked for the canonical Pro alias.
-      let modelSlug = opts.model;
-      const wantsPro = !modelSlug || /5[._-]?5[._-]?pro|gpt-5-pro|^pro$/i.test(modelSlug);
-      if (wantsPro) {
-        const auth = await fetchAuthSession(page);
-        const models = await fetchModels(page, auth?.accessToken);
-        const pro = findProSlug(models);
-        if (!pro) {
-          throw new ModelUnavailableError("gpt-5.5-pro");
-        }
-        modelSlug = pro;
-      }
+      // Model resolution:
+      // - If caller passed --model, use it verbatim (chatgpt.com falls
+      //   back silently to the account default if the slug is unknown).
+      // - Otherwise let the page pick the user's default model (which
+      //   for ChatGPT Pro accounts is gpt-5-5-pro). We confirm what was
+      //   actually used after the turn via data-message-model-slug.
+      const modelSlug = opts.model;
 
+      log(
+        `openConversation model=${modelSlug ?? "(account default)"} resume=${opts.conversationId ?? "no"}…`,
+      );
       await openConversation(page, {
         model: modelSlug,
         conversationId: opts.conversationId,
       });
+      log(`openConversation done, url=${page.url()}`);
 
       if (opts.web !== undefined) {
+        log(`setWebSearch ${opts.web}…`);
         await setWebSearch(page, opts.web);
       }
 
       await attachImages(page, opts.images ?? []);
 
-      await sendPrompt(page, opts.prompt);
+      log("sendPrompt…");
+      const priorBubbles = await sendPrompt(page, opts.prompt);
+      log(`sendPrompt done (priorBubbles=${priorBubbles}), url=${page.url()}`);
 
       // Wait for the turn to settle. The SSE interceptor will normally push
       // a `done` event; if the network missed (cached response, schema we
       // didn't recognize), we fall back to DOM detection.
-      await waitTurnComplete(page, opts.timeoutSec * 1_000).catch(() => {
+      log(`waitTurnComplete (timeout ${opts.timeoutSec}s)…`);
+      try {
+        await waitTurnComplete(page, opts.timeoutSec * 1_000, priorBubbles);
+      } catch (err) {
+        if (debug) {
+          const screenshotPath = `${process.env.TEMP || "."}/cgpro-debug-${Date.now()}.png`;
+          await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
+          log(`screenshot saved: ${screenshotPath}`);
+          const url = page.url();
+          const composerCount = await page.locator("#prompt-textarea").count();
+          const sendCount = await page.locator('button[data-testid="send-button"]').count();
+          const bubbleCount = await page
+            .locator(SELECTORS_DUMP.assistantMessages.join(", "))
+            .count();
+          const composerText = await page
+            .locator("#prompt-textarea")
+            .first()
+            .innerText()
+            .catch(() => "");
+          log(
+            `state: url=${url} composer=${composerCount} send=${sendCount} bubbles=${bubbleCount} composerText=${JSON.stringify(composerText.slice(0, 80))}`,
+          );
+        }
         if (!cancelled) throw new TurnTimeoutError(opts.timeoutSec);
-      });
+      }
+      log(`waitTurnComplete done, url=${page.url()}`);
 
-      const conversationId = currentConversationId(page);
+      // Conversation id can come from two sources:
+      //  - the URL once the page navigates to /c/<uuid> (regular chats)
+      //  - the SSE `started` event payload (ephemeral chats keep the
+      //    composer URL as-is but the backend still mints a UUID)
+      let conversationId = currentConversationId(page);
+      if (!conversationId) {
+        const startedEv = collected.find((e) => e.type === "started") as
+          | { conversationId?: string }
+          | undefined;
+        if (startedEv?.conversationId) {
+          conversationId = startedEv.conversationId;
+        }
+      }
+      const actualModel = await latestAssistantModelSlug(page);
+      log(`actualModel=${actualModel ?? "(unknown)"} conv=${conversationId ?? "(none)"}`);
 
-      // If the SSE interceptor didn't push `done` (or pushed an empty one),
-      // synthesize one from the DOM so the consumer's iterator finishes.
+      // Always pull the DOM text — the SSE interceptor may have missed
+      // the URL pattern and the DOM is the authoritative final state.
+      const domText = await readLatestAssistantText(page);
+
       if (!emitter.isFinished()) {
-        const dom = await readLatestAssistantText(page);
-        emitter.push({ type: "done", finalText: dom });
+        emitter.push({ type: "done", finalText: domText });
       }
 
-      // The collected list is appended to lazily by the tee'd iterator —
-      // by the time `result` resolves, the consumer has fully drained it.
       const finalEvent = collected
         .slice()
         .reverse()
         .find((e) => e.type === "done") as { finalText?: string } | undefined;
-      const finalText = finalEvent?.finalText ?? (await readLatestAssistantText(page));
+      const finalText = (finalEvent?.finalText && finalEvent.finalText.length > 0)
+        ? finalEvent.finalText
+        : domText;
 
       return { conversationId, finalText, events: collected };
     } catch (err) {

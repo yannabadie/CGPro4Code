@@ -1,15 +1,17 @@
-import type { Page, Locator } from "playwright";
+import type { Page, Locator } from "patchright";
 import { SELECTORS } from "./selectors.js";
 import { firstResolved, requireSelector } from "./chatgpt.js";
 
 /**
- * Open a fresh conversation with a target model.
+ * Open a chatgpt.com conversation.
  *
- * Strategy:
- *   1. Navigate to chatgpt.com/?model=<slug>&temporary-chat=false
- *   2. Wait for composer to appear.
- *   3. If the active model differs from `desiredModel`, open the picker
- *      and click the matching item.
+ *   - `conversationId` set → resume that exact thread (`/c/<uuid>`).
+ *   - else → start a brand-new (persistent) chat.
+ *
+ * Ephemeral / Temporary Chat is intentionally NOT exposed: the
+ * resulting conversation is not addressable by URL, which makes
+ * multi-turn auto-resume impossible — we use plain persistent chats
+ * and rely on the local index to keep them organised.
  */
 export async function openConversation(
   page: Page,
@@ -22,7 +24,6 @@ export async function openConversation(
     });
   } else {
     const url = new URL("https://chatgpt.com/");
-    url.searchParams.set("temporary-chat", "false");
     if (opts.model) url.searchParams.set("model", opts.model);
     await page.goto(url.toString(), { waitUntil: "domcontentloaded", timeout: 60_000 });
   }
@@ -82,21 +83,53 @@ export async function setWebSearch(page: Page, on: boolean): Promise<void> {
 }
 
 /**
- * Type the prompt into the composer (preserving newlines via Shift+Enter)
- * and click Send. Returns when the request has been issued.
+ * Type the prompt into the composer and submit it. Returns the assistant-
+ * bubble count from BEFORE the send so the caller can detect "the new one".
+ *
+ * Submission strategy: try the send button (waiting for it to be enabled),
+ * fall back to Enter — some account/locale combos disable the button when
+ * the composer is "empty" by their detector even when text is present.
  */
-export async function sendPrompt(page: Page, prompt: string): Promise<void> {
+export async function sendPrompt(page: Page, prompt: string): Promise<number> {
   const composer = await requireSelector(page, SELECTORS.composer, "composer");
   await composer.click();
-  // Some composers are contenteditable. Use page.keyboard for fidelity.
+  await page.waitForTimeout(120);
+  // Composer is a contenteditable div on modern chatgpt.com — use the
+  // keyboard so React's state listeners actually fire.
   const lines = prompt.split("\n");
   for (let i = 0; i < lines.length; i++) {
     if (i > 0) await page.keyboard.press("Shift+Enter");
-    await page.keyboard.type(lines[i], { delay: 1 });
+    await page.keyboard.type(lines[i], { delay: 4 });
   }
+  // Give React one paint to update the send-button enabled state.
+  await page.waitForTimeout(250);
 
-  const send = await requireSelector(page, SELECTORS.sendButton, "sendButton", 5_000);
-  await send.click({ timeout: 5_000 });
+  const priorAssistantCount = await page
+    .locator(SELECTORS.assistantMessages.join(", "))
+    .count()
+    .catch(() => 0);
+
+  const send = await firstResolved(page, SELECTORS.sendButton);
+  let clicked = false;
+  if (send) {
+    const disabled = await send
+      .getAttribute("disabled")
+      .catch(() => null);
+    const ariaDisabled = await send
+      .getAttribute("aria-disabled")
+      .catch(() => null);
+    if (disabled === null && ariaDisabled !== "true") {
+      await send.click({ timeout: 4_000 }).catch(() => {
+        /* fall through to Enter */
+      });
+      clicked = true;
+    }
+  }
+  if (!clicked) {
+    // Fall back to pressing Enter while the composer has focus.
+    await page.keyboard.press("Enter");
+  }
+  return priorAssistantCount;
 }
 
 /**
@@ -109,43 +142,155 @@ export function currentConversationId(page: Page): string | null {
 }
 
 /**
- * Wait until the assistant has finished streaming. Heuristic: stop button
- * disappears AND streaming attribute on the latest assistant bubble flips off.
+ * Wait until the assistant has produced and completed a new response.
+ *
+ *  1. Wait for a NEW assistant bubble (count > priorAssistantCount).
+ *  2. Wait for either the legacy "Stop generating" button to disappear,
+ *     OR the bubble's text content to stabilise for >= `stableMs`.
+ *
+ * Text-stability is the bulletproof completion signal — it doesn't
+ * depend on chatgpt.com's ever-shifting action-bar / data-attribute
+ * selectors.
  */
-export async function waitTurnComplete(page: Page, timeoutMs: number): Promise<void> {
+export async function waitTurnComplete(
+  page: Page,
+  timeoutMs: number,
+  priorAssistantCount = 0,
+  stableMs = 1500,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+
+  // Phase 1: wait for a new assistant bubble.
   while (Date.now() < deadline) {
-    const stop = await firstResolved(page, SELECTORS.stopButton);
-    const bubble = await latestAssistantBubble(page);
-    let streaming = false;
-    if (stop) streaming = true;
-    if (bubble) {
-      const attr = await bubble.getAttribute("data-message-streaming").catch(() => null);
-      if (attr === "true") streaming = true;
-    }
-    if (!streaming) {
-      // Wait one more tick to be sure the stream finalized the network.
-      await page.waitForTimeout(250);
-      return;
-    }
+    const count = await page
+      .locator(SELECTORS.assistantMessages.join(", "))
+      .count()
+      .catch(() => 0);
+    if (count > priorAssistantCount) break;
     await page.waitForTimeout(250);
   }
+  if (Date.now() >= deadline) {
+    throw new Error("Assistant bubble did not appear in time");
+  }
+
+  // Phase 2: poll the bubble's text every 400ms; consider the turn
+  // complete once the text has not changed for `stableMs`.
+  let lastText = "";
+  let lastChangedAt = Date.now();
+
+  while (Date.now() < deadline) {
+    // Hard signal: the legacy stop button means "still streaming".
+    const stop = await firstResolved(page, SELECTORS.stopButton);
+    if (stop) {
+      await page.waitForTimeout(400);
+      lastChangedAt = Date.now(); // reset stability window
+      continue;
+    }
+
+    const bubble = await latestAssistantBubble(page);
+    if (!bubble) {
+      await page.waitForTimeout(300);
+      continue;
+    }
+
+    const streamingAttr = await bubble
+      .getAttribute("data-message-streaming")
+      .catch(() => null);
+    if (streamingAttr === "true") {
+      await page.waitForTimeout(400);
+      lastChangedAt = Date.now();
+      continue;
+    }
+
+    const text = (await bubble.innerText().catch(() => "")) ?? "";
+    if (text !== lastText) {
+      lastText = text;
+      lastChangedAt = Date.now();
+      await page.waitForTimeout(400);
+      continue;
+    }
+
+    if (text.length > 0 && Date.now() - lastChangedAt >= stableMs) {
+      return;
+    }
+
+    await page.waitForTimeout(300);
+  }
+
   throw new Error("Turn did not complete in time");
 }
 
 export async function latestAssistantBubble(page: Page): Promise<Locator | null> {
-  const all = page.locator(SELECTORS.assistantMessages.join(", "));
-  const n = await all.count();
-  if (n === 0) return null;
-  return all.nth(n - 1);
+  // Walk fallbacks in order so we always pick the deepest, most specific
+  // selector that matches — joining them with "," would let the outer
+  // <article> wrapper be selected instead of the bubble itself.
+  for (const sel of SELECTORS.assistantMessages) {
+    const all = page.locator(sel);
+    const n = await all.count().catch(() => 0);
+    if (n > 0) return all.nth(n - 1);
+  }
+  return null;
 }
 
 /**
  * Fall-back content extraction: return the latest assistant bubble's
  * inner text. Used when SSE interception didn't capture text.
+ *
+ * Strips a leading "Thought for Ns" prefix that the Pro / Thinking models
+ * inject before the actual answer. Prefers the deepest markdown container
+ * so we don't pick up wrapper chrome.
  */
 export async function readLatestAssistantText(page: Page): Promise<string> {
+  const debug = process.env.CGPRO_DEBUG === "1";
+  const log = (m: string): void => {
+    if (debug) console.error("[cgpro:read]", m);
+  };
   const bubble = await latestAssistantBubble(page);
+  log(`bubble=${bubble ? "found" : "null"}`);
   if (!bubble) return "";
-  return (await bubble.innerText().catch(() => "")) ?? "";
+  // Try several text containers, in priority order.
+  const containers = [
+    "div.markdown",
+    "[data-message-content]",
+    ".prose",
+    ":scope", // bubble itself
+  ];
+  for (const sel of containers) {
+    const loc = sel === ":scope" ? bubble : bubble.locator(sel).first();
+    try {
+      const cnt = sel === ":scope" ? 1 : await bubble.locator(sel).count();
+      log(`${sel}: count=${cnt}`);
+      if (cnt === 0) continue;
+      const text = (await loc.innerText({ timeout: 1_500 }).catch((e) => {
+        log(`${sel}: innerText threw: ${(e as Error).message.slice(0, 60)}`);
+        return "";
+      })) ?? "";
+      log(`${sel}: text.length=${text.length} preview=${JSON.stringify(text.slice(0, 60))}`);
+      if (text.trim().length === 0) continue;
+      const cleaned = text.replace(/^Thought for \d+s\s*\n+/i, "").trim();
+      if (cleaned.length > 0) return cleaned;
+    } catch (e) {
+      log(`${sel}: outer throw: ${(e as Error).message.slice(0, 60)}`);
+    }
+  }
+  // Last resort: ask the page to dig out any text from the bubble subtree.
+  log("falling back to bubble.evaluate(innerText)");
+  const txt = await bubble
+    .evaluate((el) => (el as HTMLElement).innerText ?? "")
+    .catch((e) => {
+      log(`fallback evaluate threw: ${(e as Error).message.slice(0, 60)}`);
+      return "";
+    });
+  log(`fallback result.length=${txt.length}`);
+  return txt.replace(/^Thought for \d+s\s*\n+/i, "").trim();
+}
+
+/**
+ * Reads the model slug actually used for the latest assistant message.
+ * Useful when the picker silently keeps the user's previous default.
+ */
+export async function latestAssistantModelSlug(page: Page): Promise<string | null> {
+  const bubble = await latestAssistantBubble(page);
+  if (!bubble) return null;
+  return (await bubble.getAttribute("data-message-model-slug").catch(() => null)) ?? null;
 }

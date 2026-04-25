@@ -209,7 +209,7 @@ async function readMultiLine(): Promise<string | null> {
 }
 
 interface SlashContext {
-  page: import("playwright").Page;
+  page: import("patchright").Page;
   setWeb: (on: boolean) => Promise<void>;
   setModel: (slug: string) => Promise<void>;
   reset: () => Promise<void>;

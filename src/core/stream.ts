@@ -1,4 +1,4 @@
-import type { BrowserContext, Page } from "playwright";
+import type { BrowserContext, Page } from "patchright";
 
 export type StreamEvent =
   | { type: "started"; conversationId?: string; model?: string; web?: boolean }
@@ -110,19 +110,23 @@ export async function ensureInterceptorInstalled(context: BrowserContext): Promi
   await context.exposeBinding(
     "__cgproDone",
     (_src, payload?: { reason?: string }) => {
-      if (state.emitter) {
-        if (payload?.reason === "error") {
-          state.emitter.push({
-            type: "error",
-            message: "fetch interceptor caught a stream error",
-          });
-        } else {
-          state.emitter.push({
-            type: "done",
-            finalText: state.parser.cumulativeText(),
-          });
-        }
+      if (!state.emitter) return;
+      if (payload?.reason === "error") {
+        state.emitter.push({
+          type: "error",
+          message: "fetch interceptor caught a stream error",
+        });
+        return;
       }
+      // Only treat this as the terminal `done` if we actually streamed
+      // some text. ChatGPT's page issues several taps on
+      // /backend-api/conversation per turn (setup, requirements, the
+      // SSE itself). The setup taps finish empty — we must NOT mark
+      // the emitter complete on them or the orchestrator's authoritative
+      // DOM-derived done gets silently dropped.
+      const text = state.parser.cumulativeText();
+      if (text.length === 0) return;
+      state.emitter.push({ type: "done", finalText: text });
     },
   );
 

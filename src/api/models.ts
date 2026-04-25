@@ -1,5 +1,4 @@
-import type { Page } from "playwright";
-import { CHATGPT_HOME } from "../browser/chatgpt.js";
+import type { Page } from "patchright";
 
 export interface ChatgptModel {
   slug: string;
@@ -18,20 +17,25 @@ export interface ModelsResponse {
 /**
  * Fetches the model catalogue available to the current account.
  * GET /backend-api/models?history_and_training_disabled=false
+ *
+ * Runs inside the page so the React app's Bearer token is attached.
  */
-export async function fetchModels(page: Page, accessToken?: string): Promise<ChatgptModel[]> {
-  const headers: Record<string, string> = {
-    Accept: "application/json",
-    "OAI-Language": "en-US",
-  };
-  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
-  const resp = await page.context().request.get(
-    `${CHATGPT_HOME}backend-api/models?history_and_training_disabled=false`,
-    { headers, timeout: 10_000 },
-  );
-  if (!resp.ok()) return [];
-  const json = (await resp.json()) as ModelsResponse;
-  return json.models ?? [];
+export async function fetchModels(page: Page, _accessToken?: string): Promise<ChatgptModel[]> {
+  try {
+    const result = await page.evaluate(async () => {
+      const r = await fetch("/backend-api/models?history_and_training_disabled=false", {
+        headers: { Accept: "application/json", "OAI-Language": "en-US" },
+        credentials: "include",
+      });
+      if (!r.ok) return null;
+      return await r.json();
+    });
+    if (!result) return [];
+    const json = result as ModelsResponse;
+    return json.models ?? [];
+  } catch {
+    return [];
+  }
 }
 
 /**

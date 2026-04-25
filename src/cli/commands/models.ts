@@ -8,10 +8,14 @@ import { NotLoggedInError } from "../../errors.js";
 export interface ModelsOptions {
   profile?: string;
   json?: boolean;
+  headless?: boolean;
 }
 
 export async function modelsCommand(opts: ModelsOptions): Promise<number> {
-  const session = await openSession({ headed: false, profilePath: opts.profile });
+  const session = await openSession({
+    headed: !opts.headless,
+    profilePath: opts.profile,
+  });
   const spinner = ora("Fetching models…").start();
   try {
     await goHome(session.page);
