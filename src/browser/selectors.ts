@@ -64,6 +64,13 @@ export const SELECTORS: SelectorSet = {
     'button[aria-haspopup="menu"]:has(svg)',
   ],
   webSearchToggle: [
+    // Current chatgpt.com (April 2026): web search is a menuitemradio
+    // inside the "+ Add files and more" composer popover. Has no
+    // aria-label, no data-testid — only the inner text.
+    '[role="menuitemradio"]:has-text("Web search")',
+    '[role="menuitemradio"]:has-text("Recherche web")',
+    'div[role="menuitemradio"]:has-text("Web")',
+    // Older inline-toggle layouts (kept as fallback)
     'button[data-testid="composer-tool-web-search"]',
     'button[aria-label*="Search the web"]',
     'button[aria-label*="Rechercher sur le web"]',

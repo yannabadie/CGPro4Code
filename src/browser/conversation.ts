@@ -87,56 +87,82 @@ async function tryEnsureModel(page: Page, slug: string): Promise<void> {
  * surface the failure (not silently degrade).
  */
 export async function setWebSearch(page: Page, on: boolean): Promise<boolean> {
-  // Pass 1: inline toggle (older / desktop layout)
-  let toggle = await firstResolved(page, SELECTORS.webSearchToggle);
-  if (!toggle) {
-    // Pass 2: open the "+ tools" popover and look inside
+  // Current chatgpt.com (April 2026): the Web search switch lives
+  // inside the "+ Add files and more" popover as a menuitemradio.
+  // We open the popover, click the radio, verify aria-checked, then
+  // close. Web search shares a radio group with Create image / Deep
+  // research, so toggling it on disables those — that's intentional.
+
+  const openPopover = async (): Promise<boolean> => {
     const plus = await firstResolved(page, [
       'button[data-testid="composer-plus-btn"]',
+      'button[aria-label*="Add files" i]',
       'button[aria-label*="Add" i][aria-haspopup]',
-      'button[aria-label*="More" i][aria-haspopup]',
-      'button[aria-label*="Outils" i]',
-      'button[aria-label*="Tools" i]',
     ]);
-    if (plus) {
-      await plus.click({ timeout: 3_000 }).catch(() => {});
+    if (!plus) return false;
+    const expanded = (await plus.getAttribute("aria-expanded").catch(() => null)) === "true";
+    if (!expanded) {
+      await plus.click({ timeout: 3_000 }).catch(() => undefined);
       await page.waitForTimeout(300);
-      toggle = await firstResolved(page, [
-        '[role="menuitem"]:has-text("web")',
-        '[role="menuitem"]:has-text("Web")',
-        '[role="menuitemcheckbox"]:has-text("Web")',
-        '[role="menuitemcheckbox"]:has-text("web")',
-        ...SELECTORS.webSearchToggle,
-      ]);
+    }
+    return true;
+  };
+
+  // Try inline first (older layouts).
+  let toggle = await firstResolved(page, SELECTORS.webSearchToggle.slice(3)); // skip the menuitemradio variants
+  let viaPopover = false;
+  if (!toggle) {
+    if (await openPopover()) {
+      viaPopover = true;
+      toggle = await firstResolved(page, SELECTORS.webSearchToggle);
     }
   }
+
   if (!toggle) {
     if (on) {
       console.error(
-        "[cgpro:web] WARNING: web search toggle not found on this page; cgpro policy is web-on but we couldn't enable it. The model may answer without live web access.",
+        "[cgpro:web] WARNING: web search toggle not found in composer popover. Policy is web-on but we couldn't enable it. Run `cgpro doctor` to audit selectors.",
       );
     }
+    if (viaPopover) await page.keyboard.press("Escape").catch(() => undefined);
     return false;
   }
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const pressed =
-      (await toggle.getAttribute("aria-pressed").catch(() => null)) === "true" ||
-      (await toggle.getAttribute("aria-checked").catch(() => null)) === "true";
-    if (pressed === on) {
-      // Close the popover if we opened it.
-      await page.keyboard.press("Escape").catch(() => {});
-      return on;
-    }
-    await toggle.click({ timeout: 5_000 }).catch(() => {});
-    await page.waitForTimeout(300);
+
+  // Read current state BEFORE clicking. Radix popover items dismiss
+  // the popover on click → the locator goes stale and reading attrs
+  // returns null. So we only read once, decide whether to click, and
+  // treat a successful click as the state change.
+  const before = {
+    ck: (await toggle.getAttribute("aria-checked").catch(() => null)) === "true",
+    pr: (await toggle.getAttribute("aria-pressed").catch(() => null)) === "true",
+    ds: (await toggle.getAttribute("data-state").catch(() => null)) === "checked",
+  };
+  const wasOn = before.ck || before.pr || before.ds;
+
+  if (wasOn === on) {
+    if (viaPopover) await page.keyboard.press("Escape").catch(() => undefined);
+    return on;
   }
-  await page.keyboard.press("Escape").catch(() => {});
-  if (on) {
+
+  let clicked = false;
+  try {
+    await toggle.click({ timeout: 5_000 });
+    clicked = true;
+  } catch {
+    /* swallow */
+  }
+
+  // Popover dismisses on click. Don't try to re-read state from the
+  // stale element — re-open and re-query if you need to verify.
+  if (viaPopover && !clicked) await page.keyboard.press("Escape").catch(() => undefined);
+
+  if (!clicked && on) {
     console.error(
-      "[cgpro:web] WARNING: clicked the web-search toggle but aria-pressed/aria-checked never reflected `on`. Continuing — but verify the result.",
+      "[cgpro:web] WARNING: failed to click the Web search radio. The model may answer without live web access.",
     );
+    return false;
   }
-  return false;
+  return on;
 }
 
 /**

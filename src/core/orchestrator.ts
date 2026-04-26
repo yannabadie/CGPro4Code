@@ -182,6 +182,22 @@ function runAskInner(
       const actualModel = await latestAssistantModelSlug(page);
       log(`actualModel=${actualModel ?? "(unknown)"} conv=${conversationId ?? "(none)"}`);
 
+      // GPT-5.5 Pro is policy. If the bubble's model slug doesn't include
+      // "pro", warn loudly to stderr — the user almost certainly wanted
+      // Pro and got the regular Thinking model. Common cause: the model
+      // picker silently kept the chat's previous default, or the project
+      // we navigated into pinned a non-Pro model.
+      const wantedPro = (modelSlug ?? "").toLowerCase().includes("pro");
+      const gotPro = (actualModel ?? "").toLowerCase().includes("pro");
+      if (wantedPro && !gotPro) {
+        const msg =
+          `cgpro asked for "${modelSlug}" but the response came from "${actualModel ?? "unknown"}" — ` +
+          `the model picker did not switch. Common causes: project default model overrides, ` +
+          `or a stale conversation that resumed with its previous model.`;
+        console.error(`[cgpro:model] ⚠ ${msg}`);
+        emitter.push({ type: "tool", name: "model-mismatch", meta: { wanted: modelSlug, got: actualModel } });
+      }
+
       // Always pull the DOM text — the SSE interceptor may have missed
       // the URL pattern and the DOM is the authoritative final state.
       const domText = await readLatestAssistantText(page);

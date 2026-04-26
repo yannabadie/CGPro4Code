@@ -10,10 +10,12 @@ export interface CgproConfig {
 }
 
 const DEFAULTS: CgproConfig = {
-  // Intentionally undefined: ChatGPT Pro accounts default to gpt-5-5-pro
-  // server-side, and forcing a slug like "gpt-5-pro" via ?model= breaks
-  // when the slug isn't recognised. Pass --model to override.
-  defaultModel: undefined,
+  // GPT-5.5 Pro is the entire reason cgpro exists. Force the slug —
+  // earlier comment claimed Pro accounts default to it server-side
+  // but the user's account actually defaults to gpt-5-5-thinking and
+  // we silently used that instead. Verified via `cgpro status` that
+  // this slug is in the user's catalogue.
+  defaultModel: "gpt-5-5-pro",
   defaultWeb: true,
   defaultHeadless: false,
   timeoutSec: 600,
