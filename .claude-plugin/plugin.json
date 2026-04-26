@@ -1,6 +1,6 @@
 {
   "name": "cgpro",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Talk to ChatGPT 5.5 Pro (extended reasoning + live web search) from Claude Code via the cgpro CLI.",
   "author": {
     "name": "Yann Abadie",
