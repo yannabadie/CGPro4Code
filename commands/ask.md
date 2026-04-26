@@ -8,24 +8,40 @@ ChatGPT 5.5 Pro and present the answer in this conversation.
 
 ## Steps
 
-1. Run, via the `Bash` tool:
+GPT-5.5 Pro often takes **5-30 minutes** for non-trivial questions and
+can run **over an hour** for hard reasoning. The Bash tool's per-call
+ceiling is 10 minutes, so for any prompt that might be slow you MUST
+use the background-job pattern.
 
-   ```bash
-   cgpro ask --json $ARGUMENTS
-   ```
+### Fast path (likely <10 min)
 
-   (The `--json` flag gives you a stream of NDJSON events you can
-   parse instead of relying on terminal formatting. If you need the
-   raw rendered output, drop `--json`.)
+```bash
+cgpro ask --json --timeout 600 "$ARGUMENTS"
+```
 
-2. Parse the NDJSON stream. The terminal `done` event carries
-   `finalText` — that is the model's answer. Show it to the user.
+Parse NDJSON. Terminal `done` event carries `finalText`.
 
-3. If the stream ends with an `error` event, relay the message and
-   suggest the matching fix:
-   - `Not signed in` → `cgpro login` or `cgpro adopt`
-   - `Selector broken` → `cgpro doctor` then file an issue
-   - `Turn timed out` → retry with `--timeout <bigger>`
+### Long path (likely >10 min — default for serious questions)
+
+1. Start the request in the background with the Bash tool:
+   - command: `cgpro ask --json --timeout 7200 "$ARGUMENTS" > "$TMPDIR/cgpro-$$.out" 2>&1`
+   - `run_in_background: true`
+   - capture the returned bash_id
+2. Use the BashOutput tool with that bash_id to peek at progress every
+   60-120 seconds. Watch for an NDJSON line whose `type` is `"done"`
+   (success) or `"error"` (failure).
+3. Once `done` arrives, parse `finalText` from that line and present
+   it to the user.
+4. If the user's question implied "I'll wait" / "deep analysis" /
+   "review", default to the long path. If unsure, ask.
+
+## Failure surfaces to relay
+
+- `Not signed in` → `cgpro login` or `cgpro adopt`
+- `Selector broken` → `cgpro doctor` then file an issue
+- `Turn timed out` → bump `--timeout` (max 14400 in daemon mode)
+- `[cgpro:web] WARNING ...` → web search couldn't be enabled; surface this so the user knows the answer is from training data only
+- `[cgpro:model] ⚠ ...` → model picker silently switched away from Pro; surface the slug returned
 
 ## Notes
 

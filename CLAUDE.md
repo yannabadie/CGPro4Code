@@ -56,7 +56,9 @@ ChatGPT Projects are mirrored via local `~/.cgpro/projects.json` mapping cwd →
 
 - **Bundled Chromium, not system Chrome.** `chromium.launchPersistentContext(dir, { channel: undefined, ... })`. `channel: "chrome"` collides with the user's running Chrome on Windows.
 
-- **Turn completion = text stability.** `waitTurnComplete` polls the latest assistant bubble's `innerText` every 400ms; "done" = no change for 1.5s. The legacy `data-message-streaming` attribute and "Stop generating" button are unreliable across model variants.
+- **Turn completion = text stability.** `waitTurnComplete` polls the latest assistant bubble's `innerText` every 400ms; "done" = no change for `stableMs` (default 4000ms, env-tunable via `CGPRO_STABLE_MS`). The legacy `data-message-streaming` attribute is gone. The "Stop generating" button (when present) resets the stability window — that's the only thing covering long mid-stream pauses on Pro extended-thinking turns.
+
+- **Long turns (>10 min).** GPT-5.5 Pro can run >1 hour for hard problems. Default `cfg.timeoutSec` is 7200 (2h). Daemon clamps to 14400 (4h). Node `http.Server` timeouts are set to `0` in the daemon so SSE streams aren't killed mid-flight. Claude Code Bash tool tops out at 10 min — slash commands `/cgpro:ask` etc. MUST use `run_in_background: true` + BashOutput polling for any prompt that might be slow.
 
 - **SSE binding lives at context level.** `setActiveEmitter(context, emitter)` swaps which emitter the `__cgproChunk`/`__cgproDone` bindings route to. The interceptor (in `addInitScript`) is registered ONCE per BrowserContext. Per-turn we just swap the emitter. Reset to `null` after turn so stale bindings don't leak in daemon mode.
 

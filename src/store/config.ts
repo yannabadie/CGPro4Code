@@ -18,7 +18,10 @@ const DEFAULTS: CgproConfig = {
   defaultModel: "gpt-5-5-pro",
   defaultWeb: true,
   defaultHeadless: false,
-  timeoutSec: 600,
+  // GPT-5.5 Pro extended-thinking turns can run over an hour for hard
+  // problems. Default to 2h; user can lower via --timeout for ergonomics
+  // on quick turns or raise it explicitly. The daemon clamps separately.
+  timeoutSec: 7_200,
 };
 
 export function loadConfig(): CgproConfig {

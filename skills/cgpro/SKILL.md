@@ -29,10 +29,18 @@ cgpro ask "your question"
 ```
 
 Streams the answer to stdout. **Live web search is always on by
-default** — that's a policy choice for this CLI, since freshness +
-sources matter more than determinism for the use cases this tool
-serves. Use `--json` for NDJSON event stream when you want to parse
-programmatically.
+default** — policy choice for this CLI, freshness + sources matter
+more than determinism. Use `--json` for NDJSON event stream when you
+want to parse programmatically.
+
+### Long-running turns (>10 min)
+
+GPT-5.5 Pro extended-thinking can take **5-30 min** for non-trivial
+questions and **over an hour** for hard reasoning. cgpro defaults
+`--timeout` to 7200 (2 h). When invoking from a sandboxed shell
+(Claude Code Bash, IDE task runner, etc.) that has a per-call
+ceiling, use `run_in_background` and poll the output stream — the
+turn keeps running browser-side regardless of who's listening.
 
 ### Multi-turn
 

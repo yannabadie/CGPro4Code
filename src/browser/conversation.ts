@@ -239,7 +239,11 @@ export async function waitTurnComplete(
   page: Page,
   timeoutMs: number,
   priorAssistantCount = 0,
-  stableMs = 1500,
+  // Bumped from 1500 → 4000 because GPT-5.5 Pro extended-thinking turns
+  // can pause mid-stream for several seconds while the model deliberates.
+  // The Stop button check resets this window when chatgpt.com is still
+  // streaming, but we'd rather over-wait than truncate a long answer.
+  stableMs = Number(process.env.CGPRO_STABLE_MS ?? 4000),
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
 

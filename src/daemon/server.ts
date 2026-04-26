@@ -99,6 +99,13 @@ export async function runDaemonServer(opts: DaemonServerOptions = {}): Promise<v
       }
     });
   });
+  // Disable Node's per-request timeout — long Pro turns may stream text
+  // sporadically across the SSE channel, and we'd rather rely on
+  // waitTurnComplete's deadline than the http.Server killing the response.
+  server.requestTimeout = 0;
+  server.headersTimeout = 0;
+  server.timeout = 0;
+  server.keepAliveTimeout = 0;
 
   // Bind on loopback only; the token covers same-host adversaries.
   server.listen(opts.port ?? 0, "127.0.0.1", () => {
@@ -207,7 +214,11 @@ async function handleAsk(
       res.end(JSON.stringify({ error: "invalid_request" }));
       return;
     }
-    const timeoutSec = Math.max(10, Math.min(1800, body.timeoutSec ?? 600));
+    // 4 hours upper bound — covers the longest GPT-5.5 Pro turns we've
+    // seen in practice. Browser-side stays alive because the daemon owns
+    // the persistent context and Node's http.Server has no inactivity
+    // timeout once response headers are sent.
+    const timeoutSec = Math.max(10, Math.min(14_400, body.timeoutSec ?? 7_200));
 
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
